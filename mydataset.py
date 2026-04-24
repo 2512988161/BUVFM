@@ -169,7 +169,86 @@ class VideoFolderDataset(Dataset):
         buffer = vr.get_batch(all_indices).asnumpy()
         return buffer, clip_indices
 
+# ==========================================
+# 1. 定义一个支持返回文件路径的 Dataset 包装器
+# ==========================================
+class InferenceVideoDataset(VideoFolderDataset):
+    """继承现有的 Dataset，只修改 __getitem__ 以返回文件路径"""
+    def __getitem__(self, index):
+        sample_path = self.samples[index]
+        loaded_sample = False
+        
+        # 保持原有逻辑：如果加载失败，随机采一个顶替
+        while not loaded_sample:
+            loaded_sample = self.get_item_video(index)
+            if not loaded_sample:
+                index = np.random.randint(self.__len__())
+                sample_path = self.samples[index]  # 更新路径为实际加载成功的视频
 
+        buffer, label, clip_indices = loaded_sample
+        # 额外返回 sample_path
+        return buffer, label, clip_indices, sample_path
+        
+# ==========================================
+# 1. 定义一个通用的推理 Dataset
+# ==========================================
+class SimpleVideoDataset(Dataset):
+    """
+    专门用于推理的 Dataset：递归扫描目录下所有 mp4，不要求 class_ 命名
+    """
+    def __init__(self, root_dir, frames_per_clip=16, frame_step=2, num_clips=1, transform=None):
+        self.root_dir = root_dir
+        self.frames_per_clip = frames_per_clip
+        self.frame_step = frame_step
+        self.num_clips = num_clips
+        self.transform = transform
+        
+        self.samples = []
+        for root, _, fnames in os.walk(root_dir):
+            for fname in fnames:
+                if fname.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+                    self.samples.append(os.path.join(root, fname))
+        
+        if not self.samples:
+            print(f"警告: 在 {root_dir} 中没找到任何视频文件！")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def loadvideo_decord(self, sample):
+        try:
+            vr = VideoReader(sample, num_threads=-1, ctx=cpu(0))
+            if len(vr) < self.frames_per_clip * self.frame_step:
+                # 视频太短，简单处理：直接采样前几帧
+                indices = np.linspace(0, len(vr) - 1, num=self.frames_per_clip).astype(np.int64)
+            else:
+                # 采样中间段落
+                clip_len = self.frames_per_clip * self.frame_step
+                start_idx = (len(vr) - clip_len) // 2
+                indices = np.arange(start_idx, start_idx + clip_len, self.frame_step)[:self.frames_per_clip]
+            
+            buffer = vr.get_batch(indices).asnumpy()
+            return buffer
+        except Exception as e:
+            print(f"读取失败 {sample}: {e}")
+            return None
+
+    def __getitem__(self, index):
+        path = self.samples[index]
+        buffer = self.loadvideo_decord(path)
+        
+        if buffer is None:
+            # 如果读取失败，返回一个全零 Tensor 占位，后面逻辑会处理
+            return torch.zeros(self.num_clips, 3, self.frames_per_clip, 224, 224), path, False
+
+        # Transform 处理
+        # 注意：此处假设 num_clips=1, 仿照你原有的 split_into_clips 逻辑
+        if self.transform:
+            # 这里的 transform 通常期望 [T, H, W, C]
+            # 为了适配 make_transforms，我们将 buffer 包装成 list
+            processed_clips = [self.transform(buffer)] 
+            
+        return processed_clips, path, True
 def make_inference_dataloader(root_path, batch_size, world_size, rank, **kwargs):
     """
     对外暴露的 DataLoader 构建函数，与你原有的 `make_dataloader` 函数签名高度一致。

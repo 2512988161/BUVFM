@@ -10,28 +10,10 @@ from torch.utils.data.distributed import DistributedSampler
 
 # 导入你现有的模块 (请确保模块名与你的文件名对应)
 from buildmodel import build_model  
-from mydataset import VideoFolderDataset
+from mydataset import InferenceVideoDataset
 from utils import make_transforms 
 
-# ==========================================
-# 1. 定义一个支持返回文件路径的 Dataset 包装器
-# ==========================================
-class InferenceVideoDataset(VideoFolderDataset):
-    """继承现有的 Dataset，只修改 __getitem__ 以返回文件路径"""
-    def __getitem__(self, index):
-        sample_path = self.samples[index]
-        loaded_sample = False
-        
-        # 保持原有逻辑：如果加载失败，随机采一个顶替
-        while not loaded_sample:
-            loaded_sample = self.get_item_video(index)
-            if not loaded_sample:
-                index = np.random.randint(self.__len__())
-                sample_path = self.samples[index]  # 更新路径为实际加载成功的视频
 
-        buffer, label, clip_indices = loaded_sample
-        # 额外返回 sample_path
-        return buffer, label, clip_indices, sample_path
 
 def make_eval_dataloader(root_path, batch_size, **kwargs):
     """构建专门用于推理的 DataLoader"""
@@ -71,7 +53,7 @@ def main():
     checkpoint_path = "/home/lx/alg/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model.pt"  # 替换为你的实际权重路径
     # val_dir = "/home/lx/alg/A2_paper_inexternal_DATASET"
     val_dir = "/home/lx/alg/videos_val"
-    output_csv = "./csvs/inference_results.csv"
+    output_csv = "./output/inference_results.csv"
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     # 保持与训练一致的参数

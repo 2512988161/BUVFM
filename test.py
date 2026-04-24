@@ -7,71 +7,10 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader, Dataset
 
 # 导入你现有的模块
+from mydataset import SimpleVideoDataset
 from buildmodel import build_model  
 from utils import make_transforms 
-from decord import VideoReader, cpu
-import warnings
 
-# ==========================================
-# 1. 定义一个通用的推理 Dataset
-# ==========================================
-class SimpleVideoDataset(Dataset):
-    """
-    专门用于推理的 Dataset：递归扫描目录下所有 mp4，不要求 class_ 命名
-    """
-    def __init__(self, root_dir, frames_per_clip=16, frame_step=2, num_clips=1, transform=None):
-        self.root_dir = root_dir
-        self.frames_per_clip = frames_per_clip
-        self.frame_step = frame_step
-        self.num_clips = num_clips
-        self.transform = transform
-        
-        self.samples = []
-        for root, _, fnames in os.walk(root_dir):
-            for fname in fnames:
-                if fname.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
-                    self.samples.append(os.path.join(root, fname))
-        
-        if not self.samples:
-            print(f"警告: 在 {root_dir} 中没找到任何视频文件！")
-
-    def __len__(self):
-        return len(self.samples)
-
-    def loadvideo_decord(self, sample):
-        try:
-            vr = VideoReader(sample, num_threads=-1, ctx=cpu(0))
-            if len(vr) < self.frames_per_clip * self.frame_step:
-                # 视频太短，简单处理：直接采样前几帧
-                indices = np.linspace(0, len(vr) - 1, num=self.frames_per_clip).astype(np.int64)
-            else:
-                # 采样中间段落
-                clip_len = self.frames_per_clip * self.frame_step
-                start_idx = (len(vr) - clip_len) // 2
-                indices = np.arange(start_idx, start_idx + clip_len, self.frame_step)[:self.frames_per_clip]
-            
-            buffer = vr.get_batch(indices).asnumpy()
-            return buffer
-        except Exception as e:
-            print(f"读取失败 {sample}: {e}")
-            return None
-
-    def __getitem__(self, index):
-        path = self.samples[index]
-        buffer = self.loadvideo_decord(path)
-        
-        if buffer is None:
-            # 如果读取失败，返回一个全零 Tensor 占位，后面逻辑会处理
-            return torch.zeros(self.num_clips, 3, self.frames_per_clip, 224, 224), path, False
-
-        # Transform 处理
-        # 注意：此处假设 num_clips=1, 仿照你原有的 split_into_clips 逻辑
-        if self.transform:
-            # 这里的 transform 通常期望 [T, H, W, C]
-            # 为了适配 make_transforms，我们将 buffer 包装成 list
-            processed_clips = [self.transform(buffer)] 
-            
-        return processed_clips, path, True
 
 # ==========================================
 # 2. 主推理函数
@@ -80,7 +19,7 @@ def run_inference():
     # --- 配置参数 ---
     checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model9639(paper).pt"
     input_dir = "/home/wcz/workspace/DATASET/pros_dataset_cloud_patient_case"
-    output_csv = "./csvs/test_results.csv"
+    output_csv = "./output/test_results.csv"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     args = {

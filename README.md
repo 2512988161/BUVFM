@@ -17,6 +17,9 @@ vjepa/
 ├── train.py              # Distributed training with DDP + AMP
 ├── inference.py          # Validation set inference & evaluation
 ├── test.py               # General-purpose inference on arbitrary video dirs
+├── vis.py                # Grad-CAM visualization for model interpretability
+├── app.py                # Gradio web application (3-stage pipeline demo)
+├── pipeline_utils.py     # Pipeline logic, model interfaces, shared utilities
 ├── buildmodel.py         # Model construction & checkpoint loading
 ├── mydataset.py          # VideoFolderDataset (ImageFolder-style for videos)
 ├── utils.py              # Data augmentation & video transforms
@@ -29,6 +32,8 @@ vjepa/
 │   ├── datasets/                   # Dataset utils & transforms
 │   └── utils/                      # Distributed, logging, schedulers
 ├── ckpts/                          # Saved checkpoints (gitignored)
+├── assets/                         # Example videos for demo (15 videos, 5 per class)
+├── convert_video.py               # Transcode video to H.264 for browser playback
 ├── logs_vjepa/                     # Training logs (gitignored)
 └── csvs/                           # Inference results (gitignored)
 ```
@@ -44,11 +49,14 @@ vjepa/
 - tqdm
 - numpy
 - opencv-python
+- gradio
+- plotly
+- imageio
 
 Install:
 
 ```bash
-pip install torch torchvision decord scikit-learn pandas tqdm numpy opencv-python
+pip install torch torchvision decord scikit-learn pandas tqdm numpy opencv-python gradio plotly
 ```
 
 ## Dataset Preparation
@@ -186,6 +194,82 @@ Edit the following variables in `test.py` before running:
 - `output_csv` — output CSV path (default: `./csvs/test_results.csv`)
 
 Supports mixed precision inference and outputs per-video class probabilities.
+
+## Visualization
+
+### Grad-CAM Heatmap Visualization
+
+```bash
+python vis.py
+```
+
+This generates Grad-CAM heatmaps overlaid on video frames to interpret which spatiotemporal regions the model attends to for classification. Edit the following parameters in `visualize_gradcam()` before running:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `video_path` | `./assets/CLASS1_0.mp4` | Input video path |
+| `checkpoint_path` | `./ckpts/vjepa_full/best_vjepa_model9720.pt` | Model checkpoint |
+| `output_dir` | `./output` | Output directory |
+| `target_class` | None | Grad-CAM target class (None = use predicted class) |
+| `alpha` | 0.5 | Heatmap overlay transparency |
+
+Output files (under `output_dir`):
+- `{video_name}_gradcam.mp4` — heatmap overlay video
+- `{video_name}_gradcam_compare.mp4` — side-by-side comparison (original | Grad-CAM)
+- `{video_name}_gradcam_summary.png` — summary image with top row: original frames, bottom row: heatmaps
+
+## Video Conversion
+
+Source videos encoded with mpeg4 or other codecs may not play in browsers (e.g., Gradio's `gr.Video` component). Use the conversion script to transcode them to H.264:
+
+```bash
+python convert_video.py input.mp4 output.mp4
+python convert_video.py input.mp4 output.mp4 --fps 8   # specify output FPS
+```
+
+This uses `imageio` with the `libx264` encoder to produce browser-compatible mp4 files. The `--fps` flag is optional; if omitted, the source FPS is preserved.
+
+## 3-Stage Pipeline Demo (Gradio)
+
+A web-based interactive demo implementing a cascaded 3-stage inference pipeline for medical ultrasound video classification:
+
+```
+Video Input → [Stage 1: Rapid Filter] → [Stage 2: Refinement] → [Stage 3: VJEPA2 Classify]
+                    │                           │                           │
+              No lesions?                  No lesions?               3-class probs
+               → STOP                      → STOP                 + Grad-CAM heatmap
+```
+
+### Stage 1 — Rapid Negative Filtering
+
+Lightweight classifier (MobileNet) quickly rejects clearly negative videos. Only videos classified as containing lesions proceed to a lightweight detector (YOLO) for bounding box localization. If no boxes are found, the pipeline stops.
+
+- **Classifier**: MobileNet-V3 (placeholder — random 70% positive rate)
+- **Detector**: YOLOv8-nano (placeholder — random 80% box-found rate)
+
+### Stage 2 — Medium-weight Refinement
+
+nmODE-ResNet provides a second filter to further reduce false positives before expensive VJEPA2 inference.
+
+- **Model**: nmODE-ResNet18 (placeholder — random 80% positive rate)
+
+### Stage 3 — VJEPA2 Classification
+
+Full VJEPA2 ViT-Giant model performs 3-class risk classification (low / medium / high) with Grad-CAM visualization for interpretability.
+
+- **Model**: VJEPA2 ViT-Giant (real, fine-tuned)
+- **Output**: 3-class probability bar chart + Grad-CAM heatmap video + summary image
+
+### Running the Demo
+
+```bash
+pip install gradio plotly
+python app.py
+```
+
+Open http://localhost:9530 in your browser. Upload a video or click an example to run the pipeline. The flowchart at the top updates dynamically as each stage completes.
+
+> **Note**: Stage 1 and 2 currently use placeholder models (random outputs) for demonstration. Replace the `classify()` / `detect_boxes()` methods in `pipeline_utils.py` with real model inference when available.
 
 ## Results
 

@@ -20,24 +20,21 @@ env/
 
 # Jupyter
 .ipynb_checkpoints/
-*.ipynb
+merge_test_result.ipynb
 
 # OS
 .DS_Store
 Thumbs.db
 
 # Project-specific exclusions
+# Assets (example videos for demo - keep these tracked)
+!assets/*.mp4
 tsne/
 logs_vjepa/
 ckpts/
 csvs/
 cluster_videos.py
-
-# Data
-*.mp4
-*.avi
-*.mov
-*.mkv
+output/
 
 # Large files
 *.pt
