@@ -9,6 +9,7 @@ from pipeline_utils import PipelineRunner
 # Configuration
 # ---------------------------------------------------------------------------
 
+# CHECKPOINT_PATH = "./ckpts/vjepa-ori-ft20.pt"
 CHECKPOINT_PATH = "./ckpts/vjepa_full/best_vjepa_model9639(paper).pt"
 ASSETS_DIR = "./assets"
 PORT = 9530

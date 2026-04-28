@@ -160,6 +160,7 @@ torchrun --nproc_per_node=4 train.py \
 | `--epochs` | 50 | Number of training epochs |
 | `--num_frames` | 16 | Frames per clip |
 | `--freeze_backbone` | False | Freeze encoder, train classifier only |
+| `--com_exp` | False | Comparison experiment mode (saves to `logs_vjepa/com/`, checkpoints to `ckpts/vjepa_ori/`)
 
 ### Training Output
 
@@ -172,15 +173,26 @@ torchrun --nproc_per_node=4 train.py \
 ### Validation set evaluation (with labels)
 
 ```bash
-python inference.py
+# Normal inference
+python inference.py --checkpoint ./ckpts/vjepa_full/best_vjepa_model9720.pt --val_dir /path/to/val
+
+# Robust evaluation: run inference with speckle noise at multiple levels (0.05–0.95, step 0.05)
+python inference.py --checkpoint ./ckpts/vjepa_full/best_vjepa_model9720.pt --val_dir /path/to/val --restore_true
 ```
 
-Edit the following variables in `inference.py` before running:
-- `checkpoint_path` — path to the fine-tuned checkpoint
-- `val_dir` — path to the validation dataset (same structure as training)
-- `output_csv` — output CSV path (default: `./csvs/inference_results.csv`)
+| Argument | Default | Description |
+|---|---|---|
+| `--checkpoint` | `./ckpts/vjepa_full/best_vjepa_model9720.pt` | Path to fine-tuned checkpoint |
+| `--val_dir` | `/home/lx/alg/videos_val` | One or more validation directories |
+| `--restore_true` | False | Run robust evaluation across speckle noise ratios (0.05–0.95) |
+
+Without `--restore_true`, saves results to `./output/inference_results.csv`. With `--restore_true`, saves to `./output/robust/inference_result_{ratio}.csv` for each noise level.
 
 Output includes per-video probabilities (`p0`, `p1`, `p2`), overall accuracy, and confusion matrix.
+
+### Speckle Noise Robustness (`RobustVideoTransform`)
+
+The `--restore_true` flag enables robustness evaluation by applying multiplicative Gaussian speckle noise to video frames. Each frame receives independent noise with a consistent ratio across frames. The `RobustVideoTransform` class lives in `utils.py` (mirrors `EvalVideoTransform` but adds per‑frame speckle noise). The underlying `apply_speckle_noise` function is in `src/datasets/utils/video/transforms.py`. Set `speckle_noise_ratio=0` in `make_transforms` (default) to use the standard `EvalVideoTransform` instead.
 
 ### Inference on arbitrary video directory (no labels required)
 

@@ -82,6 +82,7 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--lr', type=float, default=5e-5, help="微调学习率")
     parser.add_argument('--freeze_backbone', action='store_true', help="冻结 VJEPA Encoder，仅训练 Classifier")
+    parser.add_argument('--com_exp', action='store_true', help="原始vjepa对比实验")
     return parser.parse_args()
 
 
@@ -100,7 +101,8 @@ def main():
     # 日志设置
     logger = logging.getLogger(__name__)
     if local_rank == 0:
-        log_dir = './logs_vjepa'
+        log_dir = './logs_vjepa' if not args.com_exp else "./logs_vjepa/com"
+        
         os.makedirs(log_dir, exist_ok=True)
         log_name = "vjepa_frozen.log" if args.freeze_backbone else "vjepa_full.log"
         # 【修改这里】：加上 force=True 强制覆盖原有配置
@@ -173,6 +175,8 @@ def main():
 
     best_val_acc = 0.0
     save_dir = './ckpts/vjepa_frozen' if args.freeze_backbone else './ckpts/vjepa_full'
+    if args.com_exp:
+        save_dir = './ckpts/vjepa_ori'
     if local_rank == 0: os.makedirs(save_dir, exist_ok=True)
 
     # --- 训练循环 ---

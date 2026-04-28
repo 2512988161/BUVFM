@@ -13,14 +13,13 @@ from buildmodel import build_model
 from mydataset import InferenceVideoDataset
 from utils import make_transforms 
 
-
-
 def make_eval_dataloader(root_path, batch_size, **kwargs):
     """构建专门用于推理的 DataLoader"""
     transform = make_transforms(
-        training=False, 
-        num_views_per_clip=kwargs.get("num_views_per_segment", 1), 
-        crop_size=kwargs.get("img_size", 224)
+        training=False,
+        num_views_per_clip=kwargs.get("num_views_per_segment", 1),
+        crop_size=kwargs.get("img_size", 224),
+        speckle_noise_ratio=kwargs.get("speckle_noise_ratio", 0),
     )
 
     dataset = InferenceVideoDataset(
@@ -44,28 +43,12 @@ def make_eval_dataloader(root_path, batch_size, **kwargs):
     )
     return data_loader
 
-
 # ==========================================
 # 2. 主推理流程
 # ==========================================
-def main():
-    # --- 配置参数 ---
-    checkpoint_path = "/home/lx/alg/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model.pt"  # 替换为你的实际权重路径
-    # val_dir = "/home/lx/alg/A2_paper_inexternal_DATASET"
-    val_dir = "/home/lx/alg/videos_val"
-    output_csv = "./output/inference_results.csv"
+def infer(checkpoint_path, val_dir, output_csv, args):
+
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    
-    # 保持与训练一致的参数
-    args = {
-        "batch_size": 16,
-        "img_size": 224,
-        "frames_per_clip": 16,
-        "frame_step": 2,
-        "num_segments": 1,
-        "num_views_per_segment": 1,
-        "num_workers": 8,
-    }
 
     # --- 加载模型 ---
     print("=> 正在加载模型...")
@@ -149,4 +132,48 @@ def main():
     print("="*40)
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="VJEPA Video Inference")
+    parser.add_argument("--checkpoint", type=str,
+                        default="/home/lx/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model9720.pt",
+                        help="Path to model checkpoint")
+    parser.add_argument("--val_dir", type=str, nargs="+",
+                        default= ["/home/lx/alg/videos_val"],
+                        help="Validation video directories")
+
+    parser.add_argument("--restore_true", action="store_true",
+                        help="Run robust evaluation with speckle noise ratios from 0.05 to 0.95")
+
+    opt = parser.parse_args()
+    # checkpoint_path = "/home/lx/alg/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model.pt"  # 替换为你的实际权重路径
+    # # val_dir = ["/home/lx/alg/videos_val","/home/lx/alg/videos_test"]
+    # val_dir = ["/home/lx/alg/videos_val"]
+    # 保持与训练一致的参数
+    args = {
+        "batch_size": 16,
+        "img_size": 224,
+        "frames_per_clip": 16,
+        "frame_step": 2,
+        "num_segments": 1,
+        "num_views_per_segment": 1,
+        "num_workers": 8,
+    }
+
+    if opt.restore_true:
+        ratios = np.arange(0.05, 1.0, 0.05)
+        out_dir = "./output/robust"
+        os.makedirs(out_dir, exist_ok=True)
+
+        for ratio in ratios:
+            ratio = round(ratio, 2)
+            print(f"\n{'='*60}")
+            print(f"=> Robust inference with speckle_noise_ratio={ratio}")
+            print(f"{'='*60}")
+
+            args["speckle_noise_ratio"] = ratio
+            output_csv = os.path.join(out_dir, f"inference_result_{ratio}.csv")
+            infer(opt.checkpoint, opt.val_dir, output_csv, args)
+    else:
+        output_csv = "./output/inference_results.csv"
+        infer(opt.checkpoint, opt.val_dir, output_csv, args)

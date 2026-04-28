@@ -10,6 +10,7 @@ import torchvision.transforms as transforms
 import src.datasets.utils.video.transforms as video_transforms
 import src.datasets.utils.video.volume_transforms as volume_transforms
 from src.datasets.utils.video.randerase import RandomErasing
+from src.datasets.utils.video.transforms import apply_speckle_noise
 
 
 def make_transforms(
@@ -23,9 +24,19 @@ def make_transforms(
     crop_size=224,
     num_views_per_clip=1,
     normalize=((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    speckle_noise_ratio=0,
 ):
 
-    if not training and num_views_per_clip > 1:
+    if not training and speckle_noise_ratio > 0:
+        print(f"Making RobustVideoTransform, speckle_noise_ratio={speckle_noise_ratio}")
+        _frames_augmentation = RobustVideoTransform(
+            num_views_per_clip=num_views_per_clip,
+            short_side_size=crop_size,
+            normalize=normalize,
+            speckle_noise_ratio=speckle_noise_ratio,
+        )
+
+    elif not training and num_views_per_clip > 1:
         print("Making EvalVideoTransform, multi-view")
         _frames_augmentation = EvalVideoTransform(
             num_views_per_clip=num_views_per_clip,
@@ -172,6 +183,50 @@ class EvalVideoTransform(object):
                 view = buffer[:, start : start + side_len, :, :]
             else:
                 view = buffer[:, :, start : start + side_len, :]
+            view = self.to_tensor(view)
+            all_views.append(view)
+
+        return all_views
+
+
+class RobustVideoTransform(object):
+    """EvalVideoTransform with multiplicative speckle noise applied to each frame."""
+
+    def __init__(
+        self,
+        num_views_per_clip=1,
+        short_side_size=224,
+        normalize=((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        speckle_noise_ratio=0.05,
+    ):
+        self.views_per_clip = num_views_per_clip
+        self.short_side_size = short_side_size
+        self.speckle_noise_ratio = speckle_noise_ratio
+        self.spatial_resize = video_transforms.Resize(short_side_size, interpolation="bilinear")
+        self.to_tensor = video_transforms.Compose(
+            [
+                volume_transforms.ClipToTensor(),
+                video_transforms.Normalize(mean=normalize[0], std=normalize[1]),
+            ]
+        )
+
+    def __call__(self, buffer):
+        buffer = np.array(self.spatial_resize(buffer))
+        T, H, W, C = buffer.shape
+
+        num_views = self.views_per_clip
+        side_len = self.short_side_size
+        spatial_step = (max(H, W) - side_len) // (num_views - 1) if num_views > 1 else 0
+
+        all_views = []
+        for i in range(num_views):
+            start = i * spatial_step
+            if H > W:
+                view = buffer[:, start : start + side_len, :, :]
+            else:
+                view = buffer[:, :, start : start + side_len, :]
+
+            view = apply_speckle_noise(view, self.speckle_noise_ratio)
             view = self.to_tensor(view)
             all_views.append(view)
 

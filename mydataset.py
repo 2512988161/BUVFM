@@ -173,7 +173,30 @@ class VideoFolderDataset(Dataset):
 # 1. 定义一个支持返回文件路径的 Dataset 包装器
 # ==========================================
 class InferenceVideoDataset(VideoFolderDataset):
-    """继承现有的 Dataset，只修改 __getitem__ 以返回文件路径"""
+    def __init__(self, root_dir, **kwargs):
+        """
+        root_dir: 文件夹路径列表，例如["/path/to/val", "/path/to/test"]
+        """
+        # 先用第一个目录初始化基类
+        super().__init__(root_dir=root_dir[0], **kwargs)
+
+        all_samples = []
+        all_labels =[]
+
+        print(f"=> 正在扫描所有目录并合并数据...")
+        for d in root_dir:
+            if not os.path.exists(d):
+                print(f"警告: 目录不存在 {d}")
+                continue
+            # 临时实例化以获取该目录下的 samples 和 labels
+            tmp_ds = VideoFolderDataset(root_dir=d, **kwargs)
+            all_samples.extend(tmp_ds.samples)
+            all_labels.extend(tmp_ds.labels)
+
+        # 覆盖基类的属性，确保 samples 和 labels 长度一致
+        self.samples = all_samples
+        self.labels = all_labels
+        print(f"=> 合并完成，总视频数: {len(self.samples)}")
     def __getitem__(self, index):
         sample_path = self.samples[index]
         loaded_sample = False
@@ -189,6 +212,45 @@ class InferenceVideoDataset(VideoFolderDataset):
         # 额外返回 sample_path
         return buffer, label, clip_indices, sample_path
         
+
+# --- 1. 修复 Dataset 合并逻辑 ---
+class CombinedInferenceDataset(VideoFolderDataset):
+    def __init__(self, root_dirs, **kwargs):
+        """
+        root_dirs: 文件夹路径列表，例如["/path/to/val", "/path/to/test"]
+        """
+        # 先用第一个目录初始化基类
+        super().__init__(root_dir=root_dirs[0], **kwargs)
+
+        all_samples = []
+        all_labels =[]
+
+        print(f"=> 正在扫描所有目录并合并数据...")
+        for d in root_dirs:
+            if not os.path.exists(d):
+                print(f"警告: 目录不存在 {d}")
+                continue
+            # 临时实例化以获取该目录下的 samples 和 labels
+            tmp_ds = VideoFolderDataset(root_dir=d, **kwargs)
+            all_samples.extend(tmp_ds.samples)
+            all_labels.extend(tmp_ds.labels)
+
+        # 覆盖基类的属性，确保 samples 和 labels 长度一致
+        self.samples = all_samples
+        self.labels = all_labels
+        print(f"=> 合并完成，总视频数: {len(self.samples)}")
+
+    def __getitem__(self, index):
+        # 调用基类的视频读取函数
+        # 此时 self.samples 和 self.labels 已经是完整的了
+        loaded_sample = self.get_item_video(index)
+        if not loaded_sample:
+            return None
+        buffer, label, clip_indices = loaded_sample
+        sample_path = self.samples[index]
+        return buffer, label, sample_path
+
+
 # ==========================================
 # 1. 定义一个通用的推理 Dataset
 # ==========================================
@@ -249,6 +311,7 @@ class SimpleVideoDataset(Dataset):
             processed_clips = [self.transform(buffer)] 
             
         return processed_clips, path, True
+
 def make_inference_dataloader(root_path, batch_size, world_size, rank, **kwargs):
     """
     对外暴露的 DataLoader 构建函数，与你原有的 `make_dataloader` 函数签名高度一致。

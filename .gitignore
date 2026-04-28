@@ -35,6 +35,9 @@ ckpts/
 csvs/
 cluster_videos.py
 output/
+pretrain/
+convert_video.py
+vis.py
 
 # Large files
 *.pt

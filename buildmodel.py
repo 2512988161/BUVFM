@@ -167,7 +167,7 @@ def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes
     )
     
     # Load classifier weights if present in checkpoint
-    if "classifiers" in checkpoint:
+    if "classifiers" in checkpoint and checkpoint["classifiers"]:
         classifier_dict = checkpoint["classifiers"][0] if isinstance(checkpoint["classifiers"], list) else checkpoint["classifiers"]
         # Remove module. prefix if present
         classifier_dict = {

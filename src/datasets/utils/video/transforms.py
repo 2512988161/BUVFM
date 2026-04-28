@@ -1159,3 +1159,11 @@ class Normalize(object):
 
     def __repr__(self):
         return self.__class__.__name__ + "(mean={0}, std={1})".format(self.mean, self.std)
+
+
+def apply_speckle_noise(view, ratio):
+    """Apply multiplicative Gaussian speckle noise to a numpy array (T, H, W, C)."""
+    if ratio > 0:
+        noise = np.random.randn(*view.shape).astype(np.float32) * ratio
+        view = view * (1 + noise)
+    return view

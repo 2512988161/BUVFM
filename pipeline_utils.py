@@ -178,7 +178,7 @@ class Stage3Classifier:
             "confidence": float(probs_np[pred_class]),
         }
 
-    def gradcam(self, video_path, target_class=None, alpha=0.5):
+    def gradcam(self, video_path, target_class=None, alpha=0.2):
         """Run Grad-CAM visualization. Returns in-memory arrays (RGB)."""
         buffer, indices = load_video_frames(video_path, self.frames_per_clip, self.frame_step)
         clips_input = prepare_model_input(buffer, self.transform, self.device)
