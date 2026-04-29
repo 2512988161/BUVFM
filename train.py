@@ -17,7 +17,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from sklearn.metrics import confusion_matrix
 import decord
 # decord.bridge.set_bridge('torch')
-
+import warnings
+warnings.filterwarnings("ignore")
 # ==========================================
 # 导入你的模块
 # ==========================================
@@ -83,6 +84,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=5e-5, help="微调学习率")
     parser.add_argument('--freeze_backbone', action='store_true', help="冻结 VJEPA Encoder，仅训练 Classifier")
     parser.add_argument('--com_exp', action='store_true', help="原始vjepa对比实验")
+    parser.add_argument('--exp_name', type=str, default=None, help="实验名称后缀，会追加到 save_dir 和 logname")
     return parser.parse_args()
 
 
@@ -105,6 +107,8 @@ def main():
         
         os.makedirs(log_dir, exist_ok=True)
         log_name = "vjepa_frozen.log" if args.freeze_backbone else "vjepa_full.log"
+        if args.exp_name is not None:
+            log_name = log_name.replace('.log', f'_{args.exp_name}.log')
         # 【修改这里】：加上 force=True 强制覆盖原有配置
         logging.basicConfig(level=logging.INFO, 
                             format='%(asctime)s - %(message)s',
@@ -177,6 +181,8 @@ def main():
     save_dir = './ckpts/vjepa_frozen' if args.freeze_backbone else './ckpts/vjepa_full'
     if args.com_exp:
         save_dir = './ckpts/vjepa_ori'
+    if args.exp_name is not None:
+        save_dir = f"{save_dir}_{args.exp_name}"
     if local_rank == 0: os.makedirs(save_dir, exist_ok=True)
 
     # --- 训练循环 ---
