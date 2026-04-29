@@ -36,6 +36,8 @@ csvs/
 cluster_videos.py
 output/
 pretrain/
+pretraining/data/
+pretraining/output/
 convert_video.py
 vis.py
 
