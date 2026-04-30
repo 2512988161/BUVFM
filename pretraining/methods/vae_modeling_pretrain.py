@@ -724,9 +724,10 @@ class LPIPSWithDiscriminator3D(nn.Module):
         else:
             self.perceptual_loss = None
 
-    def calculate_adaptive_weight(self, nll_loss, g_loss, last_layer):
-        nll_grads = torch.autograd.grad(nll_loss, last_layer, retain_graph=True)[0]
+    def calculate_adaptive_weight(self, rec_loss_mean, g_loss, last_layer):
+        rec_grads = torch.autograd.grad(rec_loss_mean, last_layer, retain_graph=True)[0]
         g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
+        nll_grads = rec_grads / torch.exp(self.logvar.detach())
         d_weight = torch.norm(nll_grads) / (torch.norm(g_grads) + 1e-4)
         d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
         return d_weight * self.discriminator_weight
@@ -745,8 +746,8 @@ class LPIPSWithDiscriminator3D(nn.Module):
             p_loss = self.perceptual_loss(inputs_2d.contiguous(), reconstructions_2d.contiguous())
             rec_loss = rec_loss + self.perceptual_weight * p_loss
 
-        nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar
-        nll_loss = torch.mean(nll_loss)
+        rec_loss_mean = torch.mean(rec_loss)
+        nll_loss = rec_loss_mean / torch.exp(self.logvar) + self.logvar
 
         kl_loss = posteriors.kl()
         kl_loss = torch.mean(kl_loss)
@@ -759,16 +760,16 @@ class LPIPSWithDiscriminator3D(nn.Module):
                 f"{split}/logvar": self.logvar.detach(),
                 f"{split}/kl_loss": kl_loss.detach(),
                 f"{split}/nll_loss": nll_loss.detach(),
-                f"{split}/rec_loss": rec_loss.detach().mean(),
+                f"{split}/rec_loss": rec_loss_mean.detach(),
             }
             return loss, log
 
         # GAN phase
         if optimizer_idx == 0:
             # Generator update
-            logits_fake = self.discriminator(reconstructions.contiguous())
+            logits_fake = self.discriminator(reconstructions.float().contiguous())
             g_loss = -torch.mean(logits_fake)
-            d_weight = self.calculate_adaptive_weight(nll_loss, g_loss, last_layer)
+            d_weight = self.calculate_adaptive_weight(rec_loss_mean, g_loss, last_layer)
             disc_factor = adopt_weight(self.disc_factor, global_step,
                                        threshold=self.discriminator_iter_start)
             loss = nll_loss + self.kl_weight * kl_loss + d_weight * disc_factor * g_loss
@@ -777,7 +778,7 @@ class LPIPSWithDiscriminator3D(nn.Module):
                 f"{split}/logvar": self.logvar.detach(),
                 f"{split}/kl_loss": kl_loss.detach(),
                 f"{split}/nll_loss": nll_loss.detach(),
-                f"{split}/rec_loss": rec_loss.detach().mean(),
+                f"{split}/rec_loss": rec_loss_mean.detach(),
                 f"{split}/d_weight": d_weight.detach(),
                 f"{split}/disc_factor": torch.tensor(disc_factor),
                 f"{split}/g_loss": g_loss.detach(),
@@ -786,8 +787,8 @@ class LPIPSWithDiscriminator3D(nn.Module):
 
         if optimizer_idx == 1:
             # Discriminator update
-            logits_real = self.discriminator(inputs.contiguous().detach())
-            logits_fake = self.discriminator(reconstructions.contiguous().detach())
+            logits_real = self.discriminator(inputs.float().contiguous().detach())
+            logits_fake = self.discriminator(reconstructions.float().contiguous().detach())
             disc_factor = adopt_weight(self.disc_factor, global_step,
                                        threshold=self.discriminator_iter_start)
             d_loss = disc_factor * self.disc_loss(logits_real, logits_fake)
@@ -876,6 +877,11 @@ class VideoVAEPretrainModel(nn.Module):
     def forward(self, x):
         z, posterior = self.encode(x)
         dec = self.decode(z)
+        # Touch loss params so DDP registers them as used during forward.
+        # Loss is computed outside DDP forward (in vae_engine), but DDP
+        # tracks params via the forward graph. Without this, DDP fires
+        # hooks twice: once during backward and once during unused-param check.
+        dec = dec + sum(p.reshape(-1)[0] * 0.0 for p in self.loss.parameters())
         return dec, posterior
 
     def get_encoder_state_dict(self):

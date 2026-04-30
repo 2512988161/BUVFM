@@ -25,6 +25,7 @@ def train_one_epoch(
     wd_schedule_values=None,
     log_file=None,
     disc_start: int = 50001,
+    max_steps: int = None,
 ):
     model.train()
     model_without_ddp = model.module if hasattr(model, 'module') else model
@@ -53,7 +54,7 @@ def train_one_epoch(
 
         # ---- AE (generator) step ----
         optimizer_ae.zero_grad()
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast('cuda'):
             reconstructions, posterior = model(images)
 
         loss_ae, log_ae = model_without_ddp.loss(
@@ -65,21 +66,13 @@ def train_one_epoch(
             print(f"Loss is {loss_ae.item()}, stopping training")
             sys.exit(2)
 
-        if loss_scaler is not None:
-            is_second_order = hasattr(optimizer_ae, "is_second_order") and optimizer_ae.is_second_order
-            grad_norm = loss_scaler(
-                loss_ae, optimizer_ae, clip_grad=max_norm,
-                parameters=model.parameters(), create_graph=is_second_order,
-            )
-            loss_scale_value = loss_scaler.state_dict()["scale"]
+        loss_ae.backward()
+        if max_norm is None:
+            grad_norm = get_grad_norm_(model_without_ddp.parameters())
         else:
-            loss_ae.backward()
-            if max_norm is None:
-                grad_norm = get_grad_norm_(model.parameters())
-            else:
-                grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
-            optimizer_ae.step()
-            loss_scale_value = 0
+            grad_norm = torch.nn.utils.clip_grad_norm_(model_without_ddp.parameters(), max_norm)
+        optimizer_ae.step()
+        loss_scale_value = 0
 
         # ---- Discriminator step ----
         optimizer_disc.zero_grad()
@@ -129,6 +122,9 @@ def train_one_epoch(
                 if isinstance(v, torch.Tensor) and v.numel() == 1:
                     log_writer.update(v.item(), head=k)
             log_writer.set_step()
+
+        if max_steps is not None and step >= max_steps - 1:
+            break
 
     metric_logger.synchronize_between_processes()
     avg_msg = "Averaged stats: " + str(metric_logger)

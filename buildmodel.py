@@ -148,7 +148,14 @@ def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes
     
     # Load state dict with strict=False to ignore missing keys
     msg = model.load_state_dict(pretrained_dict, strict=False)
-    logger.info(f"loaded pretrained model with msg: {msg}")
+    extra = len(msg.unexpected_keys)
+    missing = len(msg.missing_keys)
+    matched = len(pretrained_dict) - extra
+    logger.info(f"loaded pretrained model: matched {matched}, extra {extra}, missing {missing}")
+    if extra > 0:
+        logger.info(f"extra keys: {msg.unexpected_keys}")
+    if missing > 0:
+        logger.info(f"missing keys: {msg.missing_keys}")
 
     # Wrap with ClipAggregation
     model = ClipAggregation(

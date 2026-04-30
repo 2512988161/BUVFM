@@ -77,7 +77,7 @@ def get_args():
     parser = argparse.ArgumentParser("VideoVAEPlus pretraining on ultrasound videos", add_help=False)
     parser.add_argument("--batch_size", default=2, type=int, help="Per-GPU batch size")
     parser.add_argument("--epochs", default=100, type=int)
-    parser.add_argument("--save_ckpt_freq", default=5, type=int)
+    parser.add_argument("--save_ckpt_freq", default=1, type=int)
 
     # Model
     parser.add_argument("--embed_dim", default=4, type=int, help="VAE latent dim")
@@ -125,6 +125,9 @@ def get_args():
     parser.add_argument("--start_epoch", default=0, type=int)
     parser.add_argument("--num_workers", default=8, type=int)
     parser.add_argument("--pin_mem", action="store_true", default=True)
+
+    # Debug
+    parser.add_argument("--debug", action="store_true", default=False)
 
     # DDP
     parser.add_argument("--world_size", default=1, type=int)
@@ -233,7 +236,6 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[args.gpu], find_unused_parameters=True
         )
-        model._set_static_graph()
         model_without_ddp = model.module
 
     # ================================================================
@@ -285,6 +287,17 @@ def main(args):
     print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
 
     # ================================================================
+    # Debug mode overrides
+    # ================================================================
+    if args.debug:
+        args.epochs = 2
+        args.auto_resume = False
+        debug_max_steps = 3
+        print("[DEBUG] Overriding: epochs=2, max_steps=3, auto_resume=False")
+    else:
+        debug_max_steps = None
+
+    # ================================================================
     # Auto-resume
     # ================================================================
     auto_load_model(
@@ -320,6 +333,7 @@ def main(args):
             wd_schedule_values=wd_schedule_values,
             log_file=log_fh,
             disc_start=args.disc_start,
+            max_steps=debug_max_steps,
         )
 
         if args.output_dir:
