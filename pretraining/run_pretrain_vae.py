@@ -86,7 +86,7 @@ def get_args():
                         help="Temporal compression factor (4x)")
     parser.add_argument("--disc_start", default=50001, type=int,
                         help="Global step to start discriminator training")
-    parser.add_argument("--kl_weight", default=1e-6, type=float, help="KL divergence weight")
+    parser.add_argument("--kl_weight", default=8.33e-8, type=float, help="KL divergence weight")
     parser.add_argument("--disc_weight", default=0.5, type=float, help="Discriminator loss weight")
     parser.add_argument("--input_size", default=224, type=int, help="Input spatial size")
 
@@ -94,12 +94,12 @@ def get_args():
     parser.add_argument("--opt", default="adamw", type=str)
     parser.add_argument("--opt_eps", default=1e-8, type=float)
     parser.add_argument("--opt_betas", default=[0.5, 0.9], type=float, nargs="+")
-    parser.add_argument("--clip_grad", type=float, default=0.02, help="Gradient clipping")
+    parser.add_argument("--clip_grad", type=float, default=1.0, help="Gradient clipping")
     parser.add_argument("--weight_decay", type=float, default=0.0)
     parser.add_argument("--weight_decay_end", type=float, default=None)
 
     # LR
-    parser.add_argument("--lr", type=float, default=4.5e-6, help="Base learning rate")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Base learning rate")
     parser.add_argument("--warmup_lr", type=float, default=1e-8)
     parser.add_argument("--min_lr", type=float, default=1e-7)
     parser.add_argument("--warmup_epochs", type=int, default=5)

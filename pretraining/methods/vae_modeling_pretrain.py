@@ -734,8 +734,8 @@ class LPIPSWithDiscriminator3D(nn.Module):
     def forward(self, inputs, reconstructions, posteriors, optimizer_idx, global_step,
                 last_layer=None, split="train"):
         t = inputs.shape[2]
-        inputs_2d = rearrange(inputs, "b c t h w -> (b t) c h w")
-        reconstructions_2d = rearrange(reconstructions, "b c t h w -> (b t) c h w")
+        inputs_2d = rearrange(inputs.float(), "b c t h w -> (b t) c h w")
+        reconstructions_2d = rearrange(reconstructions.float(), "b c t h w -> (b t) c h w")
 
         # L1 loss
         rec_loss = torch.abs(inputs_2d.contiguous() - reconstructions_2d.contiguous())
@@ -746,10 +746,10 @@ class LPIPSWithDiscriminator3D(nn.Module):
             rec_loss = rec_loss + self.perceptual_weight * p_loss
 
         nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar
-        nll_loss = torch.sum(nll_loss) / nll_loss.shape[0]
+        nll_loss = torch.mean(nll_loss)
 
         kl_loss = posteriors.kl()
-        kl_loss = torch.sum(kl_loss) / kl_loss.shape[0]
+        kl_loss = torch.mean(kl_loss)
 
         # Before discriminator start: only reconstruction + KL
         if global_step < self.discriminator_iter_start:
