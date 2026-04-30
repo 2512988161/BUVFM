@@ -79,21 +79,22 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Distributed Training for VJEPA2")
     parser.add_argument('--pretrained_ckpt', type=str, required=True, help="VJEPA 预训练权重路径")
     parser.add_argument('--num_frames', type=int, default=16)
+    parser.add_argument('--num_classes', type=int, default=3, help="分类类别数")
     parser.add_argument('--batch_size', type=int, default=4, help="VJEPA显存占用大，建议改小")
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--lr', type=float, default=5e-5, help="微调学习率")
     parser.add_argument('--freeze_backbone', action='store_true', help="冻结 VJEPA Encoder，仅训练 Classifier")
     parser.add_argument('--com_exp', action='store_true', help="原始vjepa对比实验")
     parser.add_argument('--exp_name', type=str, default=None, help="实验名称后缀，会追加到 save_dir 和 logname")
+    parser.add_argument('--train_dir', type=str, default="/home/lx/alg/videos_train", help="训练集组织成class_{x}")
+    parser.add_argument('--val_dir', type=str, default= "/home/lx/alg/videos_val", help="验证集集组织成class_{x}")
+    
     return parser.parse_args()
 
 
 # ================= 3. 主流程 =================
 def main():
     args = parse_args()
-    
-    train_dir = "/home/lx/alg/videos_train"
-    val_dir = "/home/lx/alg/videos_val"
     
     dist.init_process_group(backend='nccl')
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -120,13 +121,13 @@ def main():
 
     # 实例化刚才写的包装类
     train_dataset = CustomVJEPADataset(
-        root_dir=train_dir, mode='train', target_size=10000,
+        root_dir=args.train_dir, mode='train', target_size=10000,
         frames_per_clip=args.num_frames, frame_step=2, num_clips=1, 
         transform=transform_train, random_clip_sampling=True
     )
     
     val_dataset = CustomVJEPADataset(
-        root_dir=val_dir, mode='val',
+        root_dir=args.val_dir, mode='val',
         frames_per_clip=args.num_frames, frame_step=2, num_clips=1, 
         transform=transform_val, random_clip_sampling=False
     )
@@ -143,7 +144,7 @@ def main():
         checkpoint_path=args.pretrained_ckpt,
         resolution=224,
         frames_per_clip=args.num_frames,
-        num_classes=3,
+        num_classes=args.num_classes,
         num_heads=16,
         num_probe_blocks=1
     )
@@ -166,10 +167,20 @@ def main():
     classifier = DDP(classifier, device_ids=[local_rank], find_unused_parameters=True)
 
     # --- 损失与优化器 ---
-    counts = torch.tensor([10000, 5004, 3214], dtype=torch.float)
+    # 统计训练集中各类别的样本数，用于计算类别权重
+    from collections import Counter
+    label_counts = Counter(train_dataset.labels)
+    counts = torch.tensor([label_counts[i] for i in range(args.num_classes)], dtype=torch.float)
     weights = 1.0 / counts
-    weights = weights / weights.sum() * 3
+    weights = weights / weights.sum() * args.num_classes
     weights = weights.cuda(local_rank)
+
+    # # --- 损失与优化器 ---
+    # counts = torch.tensor([10000, 5004, 3214], dtype=torch.float)
+    # weights = 1.0 / counts
+    # weights = weights / weights.sum() * 3
+    # weights = weights.cuda(local_rank)
+
     
     criterion = nn.CrossEntropyLoss(weight=weights).cuda(local_rank)
     optimizer = optim.AdamW(parameters_to_update, lr=args.lr, weight_decay=0.05)
@@ -250,10 +261,11 @@ def main():
                 
                 probs = torch.softmax(logits, dim=1)
                 for i in range(len(names)):
+                    prob_dict = {f'p{j}': probs[i][j].item() for j in range(args.num_classes)}
                     epoch_results.append({
                         'video_name': names[i],
                         'label': labels[i].item(),
-                        'p0': probs[i][0].item(), 'p1': probs[i][1].item(), 'p2': probs[i][2].item()
+                        **prob_dict
                     })
 
         # --- DDP 数据同步 ---

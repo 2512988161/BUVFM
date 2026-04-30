@@ -41,6 +41,7 @@ pretraining/data/
 pretraining/output/
 convert_video.py
 vis.py
+distill/
 
 # Large files
 *.pt
