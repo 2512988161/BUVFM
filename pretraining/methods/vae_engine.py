@@ -27,6 +27,7 @@ def train_one_epoch(
     disc_start: int = 50001,
 ):
     model.train()
+    model_without_ddp = model.module if hasattr(model, 'module') else model
     metric_logger = MetricLogger(delimiter="  ")
     metric_logger.add_meter("lr", SmoothedValue(window_size=1, fmt="{value:.6f}"))
     header = "Epoch: [{}]".format(epoch)
@@ -55,9 +56,9 @@ def train_one_epoch(
         with torch.cuda.amp.autocast():
             reconstructions, posterior = model(images)
 
-        loss_ae, log_ae = model.loss(
+        loss_ae, log_ae = model_without_ddp.loss(
             images, reconstructions, posterior, 0, global_step,
-            last_layer=model.get_last_layer(), split="train",
+            last_layer=model_without_ddp.get_last_layer(), split="train",
         )
 
         if not math.isfinite(loss_ae.item()):
@@ -83,13 +84,13 @@ def train_one_epoch(
         # ---- Discriminator step ----
         optimizer_disc.zero_grad()
         if global_step >= disc_start:
-            loss_disc, log_disc = model.loss(
+            loss_disc, log_disc = model_without_ddp.loss(
                 images, reconstructions.detach(), posterior, 1, global_step,
-                last_layer=model.get_last_layer(), split="train",
+                last_layer=model_without_ddp.get_last_layer(), split="train",
             )
             loss_disc.backward()
             clip_value = 0.01
-            torch.nn.utils.clip_grad_norm_(model.loss.discriminator.parameters(), clip_value)
+            torch.nn.utils.clip_grad_norm_(model_without_ddp.loss.discriminator.parameters(), clip_value)
             optimizer_disc.step()
             disc_loss_value = loss_disc.item()
         else:

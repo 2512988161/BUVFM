@@ -9,23 +9,23 @@ Reference: VideoMAEv2 (https://github.com/OpenGVLab/VideoMAEv2)
 
 Usage:
   # 1. Generate annotation files (once):
-  python pretrain/prepare_data.py \\
+  python pretraining/prepare_data.py \\
       --video_dirs /home/wcz/workspace/DATASET/us_foundation_model_dataset_videos_videos \\
                    /home/wcz/workspace/DATASET/us_foundation_model_dataset_img_videos \\
       --data_root /home/wcz/workspace/DATASET \\
-      --output_dir pretrain/data
+      --output_dir pretraining/data
 
   # 2. Launch training (8 GPUs):
-  torchrun --nproc_per_node=8 pretrain/run_pretrain_mae.py \\
+  torchrun --nproc_per_node=8 pretraining/run_pretrain_mae.py \\
       --data_root /home/wcz/workspace/DATASET \\
-      --data_path pretrain/data/us_videomae_train.txt \\
-      --output_dir pretrain/output/mae_vitg
+      --data_path pretraining/data/us_videomae_train.txt \\
+      --output_dir pretraining/output/mae_vitg
 
   # 3. Convert checkpoint for buildmodel.py:
-  python pretrain/convert_checkpoint.py \\
+  python pretraining/convert_checkpoint.py \\
       --method videomae \\
-      --input pretrain/output/mae_vitg/checkpoint-299.pth \\
-      --output pretrain/output/mae_vitg/encoder_checkpoint.pt
+      --input pretraining/output/mae_vitg/checkpoint-299.pth \\
+      --output pretraining/output/mae_vitg/encoder_checkpoint.pt
 """
 
 import argparse
@@ -41,14 +41,15 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
-
+import warnings
+warnings.filterwarnings("ignore")
 # Ensure the parent directory (vjepa root) is on sys.path so that
 # 'import src.models.vision_transformer' and 'import methods.*' both work.
 _project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-# Also add pretrain/ so "import methods.*" resolves
+# Also add pretraining/ so "import methods.*" resolves
 _pretrain_dir = os.path.dirname(os.path.abspath(__file__))
 if _pretrain_dir not in sys.path:
     sys.path.insert(0, _pretrain_dir)
@@ -112,7 +113,7 @@ def get_args():
     parser.add_argument("--warmup_steps", type=int, default=-1)
 
     # Dataset
-    parser.add_argument("--data_path", default="pretrain/data/us_videomae_train.txt", type=str)
+    parser.add_argument("--data_path", default="pretraining/data/us_videomae_train.txt", type=str)
     parser.add_argument("--data_root", default="/home/wcz/workspace/DATASET", type=str)
     parser.add_argument("--fname_tmpl", default="img_{:05}.jpg", type=str)
     parser.add_argument("--imagenet_default_mean_and_std", default=True, action="store_true")
@@ -122,7 +123,7 @@ def get_args():
                         help="Repeated augmentation samples per video")
 
     # Output
-    parser.add_argument("--output_dir", default="pretrain/output/mae_vitg", type=str)
+    parser.add_argument("--output_dir", default="pretraining/output/mae_vitg", type=str)
     parser.add_argument("--log_dir", default=None, type=str,
                         help="Log directory for TensorBoard logs (default: no TensorBoard)")
 

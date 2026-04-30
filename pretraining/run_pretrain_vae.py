@@ -6,26 +6,26 @@ Architecture: 2+1D ConvNet VAE with temporal compression + 3D PatchGAN.
   Latent z -> TemporalDecoder1DCNN -> Decoder2plus1D -> reconstruction
   Loss: L1 + LPIPS + KL + 3D PatchGAN discriminator
 
-Based on VideoVAEPlus (pretrain/VideoVAEPlus/) config_4z.yaml.
+Based on VideoVAEPlus (pretraining/VideoVAEPlus/) config_4z.yaml.
 
 Usage:
   # 1. Generate annotation files (once):
-  python pretrain/prepare_data.py \\
+  python pretraining/prepare_data.py \\
       --video_dirs /path/to/videos \\
       --data_root /path/to/dataset \\
-      --output_dir pretrain/data
+      --output_dir pretraining/data
 
   # 2. Launch training (8 GPUs):
-  torchrun --nproc_per_node=8 pretrain/run_pretrain_vae.py \\
+  torchrun --nproc_per_node=8 pretraining/run_pretrain_vae.py \\
       --data_root /path/to/dataset \\
-      --data_path pretrain/data/us_videomae_train.txt \\
-      --output_dir pretrain/output/vae_4z
+      --data_path pretraining/data/us_videomae_train.txt \\
+      --output_dir pretraining/output/vae_4z
 
   # 3. Convert checkpoint for buildmodel.py:
-  python pretrain/convert_checkpoint.py \\
+  python pretraining/convert_checkpoint.py \\
       --method vae \\
-      --input pretrain/output/vae_4z/checkpoint-99.pth \\
-      --output pretrain/output/vae_4z/encoder_checkpoint.pt
+      --input pretraining/output/vae_4z/checkpoint-99.pth \\
+      --output pretraining/output/vae_4z/encoder_checkpoint.pt
 """
 
 import argparse
@@ -40,7 +40,8 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
-
+import warnings
+warnings.filterwarnings("ignore")
 # Ensure the parent directory is on sys.path
 _project_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 if _project_root not in sys.path:
@@ -105,7 +106,7 @@ def get_args():
     parser.add_argument("--warmup_steps", type=int, default=-1)
 
     # Dataset
-    parser.add_argument("--data_path", default="pretrain/data/us_videomae_train.txt", type=str)
+    parser.add_argument("--data_path", default="pretraining/data/us_videomae_train.txt", type=str)
     parser.add_argument("--data_root", default="/home/wcz/workspace/DATASET", type=str)
     parser.add_argument("--num_frames", type=int, default=16)
     parser.add_argument("--sampling_rate", type=int, default=4)
@@ -113,7 +114,7 @@ def get_args():
     parser.add_argument("--temporal_jitter", action="store_true", default=False)
 
     # Output
-    parser.add_argument("--output_dir", default="pretrain/output/vae_4z", type=str)
+    parser.add_argument("--output_dir", default="pretraining/output/vae_4z", type=str)
     parser.add_argument("--log_dir", default=None, type=str)
 
     # System
@@ -232,6 +233,7 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[args.gpu], find_unused_parameters=True
         )
+        model._set_static_graph()
         model_without_ddp = model.module
 
     # ================================================================

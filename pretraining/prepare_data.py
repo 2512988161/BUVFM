@@ -2,11 +2,11 @@
 """Generate annotation files for VideoMAEv2 pretraining from .mp4 directories.
 
 Usage:
-    python pretrain/prepare_data.py \
+    python pretraining/prepare_data.py \
         --video_dirs /home/wcz/workspace/DATASET/us_foundation_model_dataset_videos_videos \
                      /home/wcz/workspace/DATASET/us_foundation_model_dataset_img_videos \
         --data_root /home/wcz/workspace/DATASET \
-        --output_dir pretrain/data
+        --output_dir pretraining/data
 """
 
 import argparse
@@ -42,7 +42,7 @@ def main():
                         help="Directories containing .mp4 files")
     parser.add_argument("--data_root", required=True,
                         help="Root directory for relative paths in annotation files")
-    parser.add_argument("--output_dir", default="pretrain/data",
+    parser.add_argument("--output_dir", default="pretraining/data",
                         help="Output directory for annotation files")
     args = parser.parse_args()
 
