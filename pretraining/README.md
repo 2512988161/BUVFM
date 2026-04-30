@@ -5,7 +5,7 @@
 ## 目录结构
 
 ```
-pretrain/
+pretraining/
 ├── run_pretrain_mae.py              # MAE 预训练入口脚本（独立）
 ├── run_pretrain.py                  # 统一启动器（VideoMAEv2 + BEVT）
 ├── convert_checkpoint.py            # 预训练 ckpt → buildmodel 格式转换
@@ -52,40 +52,40 @@ pretrain/
 ### 1. 准备数据
 
 ```bash
-python pretrain/prepare_data.py \
+python pretraining/prepare_data.py \
     --video_dirs /home/wcz/workspace/DATASET/us_foundation_model_dataset_videos_videos \
                  /home/wcz/workspace/DATASET/us_foundation_model_dataset_img_videos \
     --data_root /home/wcz/workspace/DATASET \
-    --output_dir pretrain/data
+    --output_dir pretraining/data
 ```
 
-生成 `pretrain/data/us_videomae_train.txt`，每行格式: `video_path 0 -1`
+生成 `pretraining/data/us_videomae_train.txt`，每行格式: `video_path 0 -1`
 
 ### 2. 启动预训练
 
 ```bash
 # 4 GPU
-torchrun --nproc_per_node=4 pretrain/run_pretrain_mae.py \
+torchrun --nproc_per_node=4 pretraining/run_pretrain_mae.py \
     --data_root /home/wcz/workspace/DATASET \
-    --data_path pretrain/data/us_videomae_train.txt \
-    --output_dir pretrain/output/mae_vitg \
+    --data_path pretraining/data/us_videomae_train.txt \
+    --output_dir pretraining/output/mae_vitg \
     --batch_size 16 --epochs 5
 
 # 单 GPU (调试)
-torchrun --nproc_per_node=1 pretrain/run_pretrain_mae.py \
+torchrun --nproc_per_node=1 pretraining/run_pretrain_mae.py \
     --data_root /home/wcz/workspace/DATASET \
-    --data_path pretrain/data/us_videomae_train.txt \
-    --output_dir pretrain/output/mae_vitg_debug \
+    --data_path pretraining/data/us_videomae_train.txt \
+    --output_dir pretraining/output/mae_vitg_debug \
     --batch_size 2 --num_sample 1 --epochs 5
 ```
 
 ### 3. 转换 checkpoint 供 downstream 使用
 
 ```bash
-python pretrain/convert_checkpoint.py \
+python pretraining/convert_checkpoint.py \
     --method videomae \
-    --input pretrain/output/mae_vitg/checkpoint-299.pth \
-    --output pretrain/output/mae_vitg/encoder_checkpoint.pt
+    --input pretraining/output/mae_vitg/checkpoint-299.pth \
+    --output pretraining/output/mae_vitg/encoder_checkpoint.pt
 ```
 
 ### 4. 在下游任务中加载
@@ -94,7 +94,7 @@ python pretrain/convert_checkpoint.py \
 from buildmodel import build_model
 
 model, classifier = build_model(
-    checkpoint_path="pretrain/output/mae_vitg/encoder_checkpoint.pt",
+    checkpoint_path="pretraining/output/mae_vitg/encoder_checkpoint.pt",
     resolution=224,
     frames_per_clip=16,
     num_classes=3,
@@ -145,7 +145,7 @@ model, classifier = build_model(
 ### 目录结构
 
 ```
-pretrain/
+pretraining/
 ├── run_pretrain_vae.py                # VAE 预训练入口脚本
 ├── methods/
 │   ├── vae_modeling_pretrain.py       # Encoder2plus1D, Decoder2plus1D, TemporalCNN, LPIPS+3D GAN loss
@@ -183,17 +183,17 @@ pretrain/
 
 ```bash
 # 1. 训练 (8 GPUs)
-torchrun --nproc_per_node=8 pretrain/run_pretrain_vae.py --data_root /home/lx/alg/videos_val/class_2   --data_path pretrain/data/us_videomae_train.txt --output_dir pretrain/output/vae_4z --batch_size 2 --epochs 10
+torchrun --nproc_per_node=8 pretraining/run_pretrain_vae.py --data_root /home/lx/alg/videos_val/class_2   --data_path pretraining/data/us_videomae_train.txt --output_dir pretraining/output/vae_4z --batch_size 2 --epochs 10
 
 # 2. 转换检查点
-python pretrain/convert_checkpoint.py --method vae \
-    --input pretrain/output/vae_4z/checkpoint-99.pth \
-    --output pretrain/output/vae_4z/encoder_checkpoint.pt
+python pretraining/convert_checkpoint.py --method vae \
+    --input pretraining/output/vae_4z/checkpoint-99.pth \
+    --output pretraining/output/vae_4z/encoder_checkpoint.pt
 
 # 3. 在下游任务中加载 (自动检测)
 from buildmodel import build_model
 model, classifier = build_model(
-    checkpoint_path="pretrain/output/vae_4z/encoder_checkpoint.pt",
+    checkpoint_path="pretraining/output/vae_4z/encoder_checkpoint.pt",
     resolution=224, frames_per_clip=16, num_classes=3
 )
 ```
@@ -222,6 +222,6 @@ model, classifier = build_model(
 ## 参考
 
 - VideoMAEv2: https://github.com/OpenGVLab/VideoMAEv2
-- VideoVAEPlus: `pretrain/VideoVAEPlus/`
+- VideoVAEPlus: `pretraining/VideoVAEPlus/`
 - VJEPA: `src/models/vision_transformer.py`
 - 下游模型构建: `buildmodel.py`

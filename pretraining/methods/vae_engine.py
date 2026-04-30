@@ -52,7 +52,8 @@ def train_one_epoch(
 
         # ---- AE (generator) step ----
         optimizer_ae.zero_grad()
-        reconstructions, posterior = model(images)
+        with torch.cuda.amp.autocast():
+            reconstructions, posterior = model(images)
 
         loss_ae, log_ae = model.loss(
             images, reconstructions, posterior, 0, global_step,

@@ -10,15 +10,15 @@ Output format: {"encoder": state_dict, "classifiers": []}
       patch_embed.proj.weight, blocks.0.norm1.weight, norm.weight, ...
 
 Usage:
-  python pretrain/convert_checkpoint.py \
+  python pretraining/convert_checkpoint.py \
       --method videomae \
-      --input pretrain/output/videomae_v2_vitg/checkpoint-299.pth \
-      --output pretrain/output/videomae_v2_vitg/encoder_checkpoint.pt
+      --input pretraining/output/videomae_v2_vitg/checkpoint-299.pth \
+      --output pretraining/output/videomae_v2_vitg/encoder_checkpoint.pt
 
-  python pretrain/convert_checkpoint.py \
+  python pretraining/convert_checkpoint.py \
       --method vae \
-      --input pretrain/output/vae_4z/checkpoint-99.pth \
-      --output pretrain/output/vae_4z/encoder_checkpoint.pt
+      --input pretraining/output/vae_4z/checkpoint-99.pth \
+      --output pretraining/output/vae_4z/encoder_checkpoint.pt
 """
 
 import argparse
@@ -42,7 +42,7 @@ def convert_videomae(input_path, output_path):
     Extracts encoder weights (VJEPA ViT) from the full pretraining model.
     Checkpoint structure: {"model": full_state_dict, "optimizer": ..., "epoch": ...}
     """
-    ckpt = torch.load(input_path, map_location="cpu")
+    ckpt = torch.load(input_path, map_location="cpu", weights_only=False)
     if "model" in ckpt:
         state_dict = ckpt["model"]
     else:
@@ -84,7 +84,7 @@ def convert_vae(input_path, output_path):
     Checkpoint structure: {"model": full_state_dict, "optimizer": ..., "epoch": ...}
     Encoder keys: encoder.*, quant_conv.*, encoder_temporal.*
     """
-    ckpt = torch.load(input_path, map_location="cpu")
+    ckpt = torch.load(input_path, map_location="cpu", weights_only=False)
     if "model" in ckpt:
         state_dict = ckpt["model"]
     else:

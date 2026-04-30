@@ -712,6 +712,18 @@ class LPIPSWithDiscriminator3D(nn.Module):
         self.disc_factor = disc_factor
         self.discriminator_weight = disc_weight
 
+        if self.perceptual_weight > 0:
+            try:
+                from taming.modules.losses.vqperceptual import LPIPS as LPIPSModel
+            except ImportError:
+                import lpips
+                LPIPSModel = lpips.LPIPS
+            self.perceptual_loss = LPIPSModel().eval()
+            for p in self.perceptual_loss.parameters():
+                p.requires_grad = False
+        else:
+            self.perceptual_loss = None
+
     def calculate_adaptive_weight(self, nll_loss, g_loss, last_layer):
         nll_grads = torch.autograd.grad(nll_loss, last_layer, retain_graph=True)[0]
         g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
@@ -729,10 +741,8 @@ class LPIPSWithDiscriminator3D(nn.Module):
         rec_loss = torch.abs(inputs_2d.contiguous() - reconstructions_2d.contiguous())
 
         # LPIPS
-        if self.perceptual_weight > 0:
-            from taming.modules.losses.vqperceptual import LPIPS
-            perceptual_loss = LPIPS().eval().to(inputs.device)
-            p_loss = perceptual_loss(inputs_2d.contiguous(), reconstructions_2d.contiguous())
+        if self.perceptual_weight > 0 and self.perceptual_loss is not None:
+            p_loss = self.perceptual_loss(inputs_2d.contiguous(), reconstructions_2d.contiguous())
             rec_loss = rec_loss + self.perceptual_weight * p_loss
 
         nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar
@@ -907,14 +917,3 @@ def get_vae_config(embed_dim=4, resolution=224, z_channels=4, temporal_scale_fac
     return ddconfig, ppconfig, lossconfig
 
 
-# ---------------------------------------------------------------------------
-# LPIPS wrapper (for systems without taming installed)
-# ---------------------------------------------------------------------------
-
-try:
-    from taming.modules.losses.vqperceptual import LPIPS
-    _has_taming = True
-except ImportError:
-    _has_taming = False
-    import lpips
-    LPIPS = lpips.LPIPS
