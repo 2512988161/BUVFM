@@ -76,15 +76,39 @@ def convert_videomae(input_path, output_path):
 
 
 def convert_vae(input_path, output_path):
-    """Convert VideoVAEPlus checkpoint.
+    """Convert VAE pretraining checkpoint with ViT encoder.
 
-    Extracts encoder weights (Encoder2plus1D + quant_conv + EncoderTemporal1DCNN)
-    from the full VAE pretraining model.
+    Extracts VisionTransformer encoder weights from the full VAE model.
+    The ViT encoder is stored under "encoder.*" keys in the state dict.
+    Strips the "encoder." prefix to produce bare VisionTransformer keys
+    compatible with build_model().
 
-    Checkpoint structure: {"model": full_state_dict, "optimizer": ..., "epoch": ...}
-    Encoder keys: encoder.*, quant_conv.*, encoder_temporal.*
+    Input formats (both supported):
+      - Raw training checkpoint: {"model": full_state_dict, "optimizer": ..., ...}
+        Keys like: encoder.patch_embed.proj.weight, encoder.blocks.0.norm1.weight, ...
+      - Pre-saved encoder checkpoint: {"encoder": state_dict, "classifiers": [...]}
     """
     ckpt = torch.load(input_path, map_location="cpu", weights_only=False)
+
+    # Case 1: Already in build_model format {"encoder": ..., "classifiers": ...}
+    if "encoder" in ckpt and "model" not in ckpt:
+        # Check if encoder keys have "encoder." prefix (raw training format)
+        encoder_dict = ckpt["encoder"]
+        sample_keys = list(encoder_dict.keys())[:3]
+        if sample_keys and sample_keys[0].startswith("encoder."):
+            # Strip "encoder." prefix
+            encoder_dict = {
+                k[len("encoder."):]: v
+                for k, v in encoder_dict.items()
+                if k.startswith("encoder.")
+            }
+        output = {"encoder": encoder_dict, "classifiers": ckpt.get("classifiers", [])}
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        torch.save(output, output_path)
+        print(f"[VAE] Already in build_model format, saved to {output_path}")
+        return
+
+    # Case 2: Raw training checkpoint {"model": state_dict, ...}
     if "model" in ckpt:
         state_dict = ckpt["model"]
     else:
@@ -94,19 +118,18 @@ def convert_vae(input_path, output_path):
     if any(k.startswith("module.") for k in state_dict.keys()):
         state_dict = strip_prefix(state_dict, "module.")
 
-    # Extract encoder-related weights
-    encoder_prefixes = ("encoder.", "quant_conv.", "encoder_temporal.")
+    # Extract ViT encoder weights (encoder.*) and strip prefix
     encoder_dict = {}
     for k, v in state_dict.items():
-        if any(k.startswith(p) for p in encoder_prefixes):
-            encoder_dict[k] = v
+        if k.startswith("encoder."):
+            encoder_dict[k[len("encoder."):]] = v
 
     if len(encoder_dict) == 0:
         raise ValueError(
-            "No encoder/quant_conv/encoder_temporal keys found. Is this a VAE checkpoint?"
+            "No encoder.* keys found. Is this a VAE checkpoint with ViT encoder?"
         )
 
-    print(f"[VAE] Extracted {len(encoder_dict)} encoder keys")
+    print(f"[VAE] Extracted {len(encoder_dict)} ViT encoder keys")
     for k in list(encoder_dict.keys())[:5]:
         print(f"  {k}: {encoder_dict[k].shape}")
     print("  ...")

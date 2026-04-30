@@ -1,19 +1,14 @@
-"""VideoVAEPlus pretraining model.
-
-Extracted from VideoVAEPlus (pretrain/VideoVAEPlus/src/) and simplified:
-  - Removed PyTorch Lightning dependency
-  - Removed text-guided/cross-attention paths (not needed for ultrasound)
-  - Removed image-video joint training
-  - Kept core: 2+1D ConvNet VAE with temporal compression + discriminator
+"""VideoVAEPlus pretraining model with ViT encoder.
 
 Architecture:
-  Encoder2plus1D → EncoderTemporal1DCNN → latent z
+  VisionTransformer (vit_giant_xformers) → ViTToLatentAdapter → latent z
   DecoderTemporal1DCNN → Decoder2plus1D → reconstruction
   Loss: L1 + LPIPS + KL + 3D PatchGAN discriminator
 
 Checkpoint compatibility with buildmodel.py:
-  Save format: {"encoder": encoder_state_dict, "classifiers": []}
-  The encoder consists of Encoder2plus1D + quant_conv + EncoderTemporal1DCNN.
+  The ViT encoder weights are saved with bare VisionTransformer keys.
+  After stripping the "encoder." prefix, the state dict is directly
+  loadable by build_model().
 """
 
 import math
@@ -22,6 +17,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange, repeat
 from functools import partial
+
+import src.models.vision_transformer as vit
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +617,48 @@ class DiagonalGaussianDistribution:
 
 
 # ---------------------------------------------------------------------------
+# ViT-to-Latent adapter
+# ---------------------------------------------------------------------------
+
+class ViTToLatentAdapter(nn.Module):
+    """Bridge ViT patch tokens → VAE latent grid expected by conv decoder.
+
+    ViT output:    [B, 1568, 1408]  (8 temporal × 14×14 spatial tokens)
+    Latent grid:   [B, 2*latent_dim, 4, 14, 14]  (4 temporal for temporal_scale_factor=4)
+    """
+
+    def __init__(self, vit_dim=1408, latent_dim=4, num_temporal=8,
+                 target_temporal=4, spatial_size=14, hidden_dim=256):
+        super().__init__()
+        self.num_temporal = num_temporal
+        self.target_temporal = target_temporal
+        self.spatial_size = spatial_size
+
+        self.proj = nn.Sequential(
+            # Temporal merge 8→4 with channel reduction 1408→hidden
+            nn.Conv3d(vit_dim, hidden_dim, kernel_size=(3, 1, 1),
+                      stride=(2, 1, 1), padding=(1, 0, 0)),
+            nn.SiLU(),
+            # Further channel reduction hidden→hidden//2
+            nn.Conv3d(hidden_dim, hidden_dim // 2, kernel_size=(3, 1, 1),
+                      padding=(1, 0, 0)),
+            nn.SiLU(),
+            # Final projection to VAE parameters (mean + logvar)
+            nn.Conv3d(hidden_dim // 2, 2 * latent_dim, kernel_size=1),
+        )
+
+    def forward(self, x):
+        # x: [B, N, vit_dim] → reshape to spatial-temporal grid
+        B = x.shape[0]
+        T, H, W = self.num_temporal, self.spatial_size, self.spatial_size
+        x = x.reshape(B, T, H, W, -1).permute(0, 4, 1, 2, 3).contiguous()
+        # [B, vit_dim, T, H, W]
+        x = self.proj(x)
+        # [B, 2*latent_dim, target_temporal, H, W]
+        return x
+
+
+# ---------------------------------------------------------------------------
 # 3D PatchGAN discriminator
 # ---------------------------------------------------------------------------
 
@@ -805,10 +844,13 @@ class LPIPSWithDiscriminator3D(nn.Module):
 # ---------------------------------------------------------------------------
 
 class VideoVAEPretrainModel(nn.Module):
-    """VideoVAEPlus pretraining model.
+    """VideoVAE pretraining model with ViT encoder.
 
-    Encoder 2+1D → Temporal compression → Latent z
-    Latent z → Temporal decompression → Decoder 2+1D → Reconstruction
+    VisionTransformer (vit_giant_xformers) → ViTToLatentAdapter → latent z
+    Latent z → DecoderTemporal1DCNN → Decoder2plus1D → Reconstruction
+
+    The ViT encoder weights are saved in build_model()-compatible format
+    via get_encoder_state_dict().
     """
 
     def __init__(
@@ -819,25 +861,59 @@ class VideoVAEPretrainModel(nn.Module):
         embed_dim=4,
         use_quant_conv=True,
         input_dim=5,
+        img_size=224,
+        num_frames=16,
+        patch_size=16,
+        tubelet_size=2,
+        encoder_embed_dim=1408,
+        encoder_depth=40,
+        encoder_num_heads=22,
+        encoder_mlp_ratio=48 / 11,
+        drop_path_rate=0.0,
+        with_cp=True,
     ):
         super().__init__()
         self.embed_dim = embed_dim
         self.use_quant_conv = use_quant_conv
+        self.num_frames = num_frames
+        self.tubelet_size = tubelet_size
 
-        # Spatial-temporal encoder/decoder
-        self.encoder = Encoder2plus1D(**ddconfig)
+        # ---- ViT encoder (vit_giant_xformers, same as MAE) ----
+        self.encoder = vit.VisionTransformer(
+            img_size=img_size,
+            patch_size=patch_size,
+            num_frames=num_frames,
+            tubelet_size=tubelet_size,
+            in_chans=3,
+            embed_dim=encoder_embed_dim,
+            depth=encoder_depth,
+            num_heads=encoder_num_heads,
+            mlp_ratio=encoder_mlp_ratio,
+            qkv_bias=True,
+            drop_path_rate=drop_path_rate,
+            use_rope=True,
+            uniform_power=True,
+            use_activation_checkpointing=with_cp,
+            out_layers=None,
+        )
+
+        # ---- ViT-to-latent adapter ----
+        # ViT produces num_frames // tubelet_size temporal tokens (e.g. 16//2 = 8).
+        # Decoder expects num_frames // temporal_scale_factor temporal positions (e.g. 16//4 = 4).
+        # Adapter merges 8 → 4 temporally via stride-(2,1,1) conv.
+        self.adapter = ViTToLatentAdapter(
+            vit_dim=encoder_embed_dim,
+            latent_dim=embed_dim,
+            num_temporal=num_frames // tubelet_size,
+            target_temporal=num_frames // ppconfig.get("temporal_scale_factor", 4),
+            spatial_size=img_size // patch_size,
+        )
+
+        # ---- Conv decoder (kept from original VAE) ----
         self.decoder = Decoder2plus1D(**ddconfig)
-
-        # Temporal compression
-        self.encoder_temporal = EncoderTemporal1DCNN(**ppconfig)
         self.decoder_temporal = DecoderTemporal1DCNN(**ppconfig)
 
-        # Quantization
-        if use_quant_conv:
-            self.quant_conv = nn.Conv3d(2 * ddconfig["z_channels"], 2 * embed_dim, 1)
-            self.post_quant_conv = nn.Conv3d(embed_dim, ddconfig["z_channels"], 1)
-
-        # Loss
+        # ---- Loss ----
         self.loss = LPIPSWithDiscriminator3D(**lossconfig)
 
         self.apply(self._init_weights)
@@ -856,45 +932,40 @@ class VideoVAEPretrainModel(nn.Module):
         return self.decoder.conv_out.weight
 
     def encode(self, x):
-        h = self.encoder(x)
-        if self.use_quant_conv:
-            h = self.quant_conv(h)
+        h = self.encoder(x)            # [B, 1568, 1408]
+        h = self.adapter(h)            # [B, 2*embed_dim, T_latent, H_p, W_p]
         posterior = DiagonalGaussianDistribution(h)
-        z = posterior.sample()
-        posterior_t = self.encoder_temporal(z)
-        posterior_t = DiagonalGaussianDistribution(posterior_t)
-        z_t = posterior_t.sample()
-        return z_t, posterior_t
+        z = posterior.sample()         # [B, embed_dim, T_latent, H_p, W_p]
+        return z, posterior
 
     def decode(self, z):
         if hasattr(self, 'decoder_temporal'):
             z = self.decoder_temporal(z)
-        if self.use_quant_conv:
-            z = self.post_quant_conv(z)
         dec = self.decoder(z)
         return dec
 
     def forward(self, x):
         z, posterior = self.encode(x)
         dec = self.decode(z)
-        # Touch loss params so DDP registers them as used during forward.
-        # Loss is computed outside DDP forward (in vae_engine), but DDP
-        # tracks params via the forward graph. Without this, DDP fires
-        # hooks twice: once during backward and once during unused-param check.
         dec = dec + sum(p.reshape(-1)[0] * 0.0 for p in self.loss.parameters())
         return dec, posterior
 
     def get_encoder_state_dict(self):
-        """Return encoder weights for buildmodel.py compatibility."""
+        """Return ViT encoder weights for build_model() compatibility.
+
+        Strips the 'encoder.' prefix so keys match bare VisionTransformer
+        format expected by build_model().
+        """
         encoder_state = {}
         for k, v in self.state_dict().items():
-            if k.startswith("encoder.") or k.startswith("quant_conv.") or k.startswith("encoder_temporal."):
-                encoder_state[k] = v
+            if k.startswith("encoder."):
+                encoder_state[k[len("encoder."):]] = v
         return encoder_state
 
 
-def get_vae_config(embed_dim=4, resolution=224, z_channels=4, temporal_scale_factor=4):
-    """Return default VAE config matching config_4z.yaml."""
+def get_vae_config(embed_dim=4, resolution=224, z_channels=4, temporal_scale_factor=4,
+                   encoder_embed_dim=1408, encoder_depth=40, encoder_num_heads=22):
+    """Return default VAE config with ViT encoder parameters."""
     ddconfig = {
         "double_z": True,
         "z_channels": z_channels,
@@ -902,7 +973,7 @@ def get_vae_config(embed_dim=4, resolution=224, z_channels=4, temporal_scale_fac
         "in_channels": 3,
         "out_ch": 3,
         "ch": 128,
-        "ch_mult": [1, 2, 4, 4],
+        "ch_mult": [1, 2, 4, 4, 4],  # 5 levels → 4 upsample steps for 16x (14→224)
         "temporal_down_factor": 1,
         "num_res_blocks": 2,
         "attn_resolutions": [],
@@ -920,6 +991,12 @@ def get_vae_config(embed_dim=4, resolution=224, z_channels=4, temporal_scale_fac
         "kl_weight": 0.000001,
         "disc_weight": 0.5,
     }
-    return ddconfig, ppconfig, lossconfig
+    vitconfig = {
+        "encoder_embed_dim": encoder_embed_dim,
+        "encoder_depth": encoder_depth,
+        "encoder_num_heads": encoder_num_heads,
+        "mlp_ratio": 48 / 11,
+    }
+    return ddconfig, ppconfig, lossconfig, vitconfig
 
 

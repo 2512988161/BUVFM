@@ -81,7 +81,7 @@ def get_args():
 
     # Model
     parser.add_argument("--embed_dim", default=4, type=int, help="VAE latent dim")
-    parser.add_argument("--z_channels", default=4, type=int, help="Encoder output channels")
+    parser.add_argument("--z_channels", default=4, type=int, help="Decoder input channels")
     parser.add_argument("--temporal_scale_factor", default=4, type=int,
                         help="Temporal compression factor (4x)")
     parser.add_argument("--disc_start", default=50001, type=int,
@@ -89,6 +89,14 @@ def get_args():
     parser.add_argument("--kl_weight", default=8.33e-8, type=float, help="KL divergence weight")
     parser.add_argument("--disc_weight", default=0.5, type=float, help="Discriminator loss weight")
     parser.add_argument("--input_size", default=224, type=int, help="Input spatial size")
+
+    # ViT encoder (matches vit_giant_xformers / MAE)
+    parser.add_argument("--encoder_embed_dim", default=1408, type=int)
+    parser.add_argument("--encoder_depth", default=40, type=int)
+    parser.add_argument("--encoder_num_heads", default=22, type=int)
+    parser.add_argument("--drop_path", default=0.0, type=float)
+    parser.add_argument("--with_cp", action="store_true", default=True,
+                        help="Gradient checkpointing for ViT encoder")
 
     # Optimizer
     parser.add_argument("--opt", default="adamw", type=str)
@@ -167,11 +175,14 @@ def main(args):
     # ================================================================
     # Build model
     # ================================================================
-    ddconfig, ppconfig, lossconfig = get_vae_config(
+    ddconfig, ppconfig, lossconfig, vitconfig = get_vae_config(
         embed_dim=args.embed_dim,
         resolution=args.input_size,
         z_channels=args.z_channels,
         temporal_scale_factor=args.temporal_scale_factor,
+        encoder_embed_dim=args.encoder_embed_dim,
+        encoder_depth=args.encoder_depth,
+        encoder_num_heads=args.encoder_num_heads,
     )
     lossconfig["disc_start"] = args.disc_start
     lossconfig["kl_weight"] = args.kl_weight
@@ -182,7 +193,15 @@ def main(args):
         ppconfig=ppconfig,
         lossconfig=lossconfig,
         embed_dim=args.embed_dim,
-        use_quant_conv=True,
+        use_quant_conv=False,
+        img_size=args.input_size,
+        num_frames=args.num_frames,
+        encoder_embed_dim=args.encoder_embed_dim,
+        encoder_depth=args.encoder_depth,
+        encoder_num_heads=args.encoder_num_heads,
+        encoder_mlp_ratio=vitconfig["mlp_ratio"],
+        drop_path_rate=args.drop_path,
+        with_cp=args.with_cp,
     )
 
     # ================================================================
@@ -344,6 +363,15 @@ def main(args):
                     model_without_ddp=model_without_ddp,
                     optimizer=optimizer_ae, loss_scaler=loss_scaler,
                 )
+                # Also save ViT encoder in build_model()-compatible format
+                if is_main_process():
+                    encoder_state = model_without_ddp.get_encoder_state_dict()
+                    encoder_path = os.path.join(args.output_dir, f"encoder_epoch_{_epoch}.pt")
+                    torch.save(
+                        {"encoder": encoder_state, "classifiers": []},
+                        encoder_path,
+                    )
+                    print(f"Saved build_model-compatible encoder to {encoder_path}")
 
         log_stats = {
             **{f"train_{k}": v for k, v in train_stats.items()},
