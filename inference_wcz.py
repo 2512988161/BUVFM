@@ -58,8 +58,7 @@ def infer(checkpoint_path, val_dir, output_csv, args):
         frames_per_clip=args["frames_per_clip"],
         num_classes=3,
         num_heads=16,
-        num_probe_blocks=1,
-        model_name=args["model_name"],
+        num_probe_blocks=1
     )
     
     model = model.to(device)
@@ -143,10 +142,9 @@ if __name__ == "__main__":
                         default="./output/maee1_huigu.csv",
                         help="OUT CSV PATH")
     parser.add_argument("--val_dir", type=str, nargs="+",
-                        default=  ["/home/lx/alg/videos_val","/home/lx/alg/videos_test"],
+                        default= ["/home/lx/alg/videos_val","/home/lx/alg/videos_test"],
                         help="Validation video directories")
-    parser.add_argument('--model_name', type=str, default='vit_giant_xformers', help="模型名，目前支持vit_giant_xformers、vit_large、vit_huge")
-    
+
     parser.add_argument("--restore_true", action="store_true",
                         help="Run robust evaluation with speckle noise ratios from 0.05 to 0.95")
 
@@ -154,9 +152,6 @@ if __name__ == "__main__":
     # checkpoint_path = "/home/lx/alg/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model.pt"  # 替换为你的实际权重路径
     # # val_dir = ["/home/lx/alg/videos_val","/home/lx/alg/videos_test"]
     # val_dir = ["/home/lx/alg/videos_val"]
-    # val_dir = ["/home/lx/dataset/huigu_internal"]
-    # val_dir = ["/home/lx/dataset/qianzhan"]
-    
     # 保持与训练一致的参数
     args = {
         "batch_size": 16,
@@ -166,7 +161,6 @@ if __name__ == "__main__":
         "num_segments": 1,
         "num_views_per_segment": 1,
         "num_workers": 8,
-        "model_name": opt.model_name,
     }
 
     if opt.restore_true:

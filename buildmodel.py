@@ -82,7 +82,7 @@ class ClipAggregation(nn.Module):
 
         return multiviews_postprocess(outputs)
         
-def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes=3, num_heads=16, num_probe_blocks=1):
+def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes=3, num_heads=16, num_probe_blocks=1,model_name = "vit_giant_xformers"):
     """
     Build and load the VJEPA2 model with classifier
     
@@ -105,7 +105,8 @@ def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes
     enc_kwargs = {
         "checkpoint_key": "encoder",
         "img_temporal_dim_size": None,
-        "model_name": "vit_giant_xformers",
+        "model_name": model_name,
+        # "model_name": "vit_giant_xformers",
         "patch_size": 16,
         "tubelet_size": 2,
         "uniform_power": True,
@@ -115,18 +116,18 @@ def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes
     wrapper_kwargs = {
         "max_frames": 16,
         "use_pos_embed": False,
-        "out_layers": [39]
     }
 
-    out_layers = wrapper_kwargs.get("out_layers")
-
-    # Initialize the encoder model
+    # Initialize the encoder model (build first to get actual depth, then set out_layers)
     model = vit.__dict__[enc_kwargs["model_name"]](
-        img_size=resolution, 
-        num_frames=frames_per_clip, 
-        out_layers=out_layers, 
+        img_size=resolution,
+        num_frames=frames_per_clip,
         **enc_kwargs
     )
+    depth = len(model.blocks)
+    out_layers = [depth - 1]
+    model.out_layers = out_layers
+    wrapper_kwargs["out_layers"] = out_layers
 
     # Load pretrained weights
     pretrained_dict = checkpoint[enc_kwargs["checkpoint_key"]]

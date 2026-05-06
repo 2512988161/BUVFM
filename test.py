@@ -17,9 +17,14 @@ from utils import make_transforms
 # ==========================================
 def run_inference():
     # --- 配置参数 ---
+    # checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full_maee1/best_vjepa_model.pt"
     checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model9639(paper).pt"
-    input_dir = "/home/wcz/workspace/DATASET/pros_dataset_cloud_patient_case"
-    output_csv = "./output/test_results.csv"
+
+    # input_dir = "/home/wcz/workspace/DATASET/pros_dataset_cloud_patient_case"
+    # input_dir = "/home/wcz/workspace/DATASET/prospective_videos_all_260428"
+    input_dir = "/home/wcz/workspace/DATASET/ALL_high_risk"
+
+    output_csv = "./output/qianzhan_ours_ALL_high_risk.csv"
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     args = {

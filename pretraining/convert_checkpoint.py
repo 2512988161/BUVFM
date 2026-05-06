@@ -15,10 +15,7 @@ Usage:
       --input pretraining/output/videomae_v2_vitg/checkpoint-299.pth \
       --output pretraining/output/videomae_v2_vitg/encoder_checkpoint.pt
 
-  python pretraining/convert_checkpoint.py \
-      --method vae \
-      --input pretraining/output/vae_4z/checkpoint-99.pth \
-      --output pretraining/output/vae_4z/encoder_checkpoint.pt
+  python pretraining/convert_checkpoint.py --method vae  --input pretraining/output/vae_4z/checkpoint-2.pth --output ckpts/vitg_vae_e1.pt
 """
 
 import argparse

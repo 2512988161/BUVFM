@@ -86,6 +86,7 @@ def parse_args():
     parser.add_argument('--freeze_backbone', action='store_true', help="冻结 VJEPA Encoder，仅训练 Classifier")
     parser.add_argument('--com_exp', action='store_true', help="原始vjepa对比实验")
     parser.add_argument('--exp_name', type=str, default=None, help="实验名称后缀，会追加到 save_dir 和 logname")
+    parser.add_argument('--model_name', type=str, default='vit_giant_xformers', help="模型名，目前支持vit_giant_xformers、vit_large、vit_huge")
     parser.add_argument('--train_dir', type=str, default="/home/lx/alg/videos_train", help="训练集组织成class_{x}")
     parser.add_argument('--val_dir', type=str, default= "/home/lx/alg/videos_val", help="验证集集组织成class_{x}")
     
@@ -146,7 +147,8 @@ def main():
         frames_per_clip=args.num_frames,
         num_classes=args.num_classes,
         num_heads=16,
-        num_probe_blocks=1
+        num_probe_blocks=1,
+        model_name = args.model_name
     )
 
     encoder = encoder.cuda(local_rank)
