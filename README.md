@@ -297,3 +297,39 @@ Open http://localhost:9530 in your browser. Upload a video or click an example t
 ## License
 
 This project is based on [VJEPA](https://github.com/facebookresearch/jepa) by Meta Platforms, Inc., licensed under the MIT License.
+
+
+##    整个推理 pipeline 对视频做了以下处理，按顺序执行：                                                                                                                                                                                                                                                                                                                                  
+  1. 视频帧采样
+  - 使用 decord.VideoReader 读取视频，输出 numpy[T, H, W, 3]，uint8，RGB，channels-last                                                                                                                     
+  - 固定取 16 帧，步长 frame_step=2，从视频开头均匀采样（np.linspace(0, 32, 16) → 帧索引 [0, 2, 4, ..., 30]）
+  - 如果视频不足 32 帧，末尾帧会补齐                                                                                                                                                                        
+                                                                                                                                                                                                            
+  2. Resize（短边缩放至 256）
+  - 保持宽高比，将短边缩放到 256 像素                                                                                                                                                                       
+  - 使用 cv2.resize + 双线性插值 (INTER_LINEAR)         
+  - 短边 = crop_size * 256 / 224 = 224 * 256 / 224 = 256                                                                                                                                                    
+                                                                                                                                                                                                            
+  3. CenterCrop（中心裁剪 224×224）                                                                                                                      
+  - 从中心区域裁剪出 224×224 的正方形                                                                                                                                                                       
+  - 输出 numpy[16, 224, 224, 3]，uint8，RGB             
+                                                                                                                                                                                                            
+  4. ClipToTensor（格式转换 + 归一化到 [0,1]） 
+  - HWC → CHW 转置：(16, 224, 224, 3) → (3, 16, 224, 224)                                                                                                                                                   
+  - 除以 255：uint8 [0,255] → float32 [0.0, 1.0]        
+  - 无 BGR↔RGB 转换，全程保持 RGB 通道顺序                                                                                                                                                                  
+                                                                                                                                                                                 
+  5. Normalize（ImageNet 标准化）
+  - 逐通道减均值除标准差：  
+  - mean = (0.485, 0.456, 0.406)
+  - std = (0.229, 0.224, 0.225)                                                                                                                                                                           
+  - 输出范围约 [-2.1, 2.6]，float32                                                                                                                                                                         
+                                                                                                                                                                                                            
+  6. 打包 & 批处理
+  - 变换后包装为 [[tensor(3, 16, 224, 224)]]（外层是 clip 列表，内层是 view 列表，推理时各为 1）                                                                                                            
+  - DataLoader 批次堆叠 → [B=16, 3, 16, 224, 224]       
+                                                                                                                                                                                                            
+  7. 输入模型   
+  - PatchEmbed3D：Conv3d(3→1408, kernel=(2,16,16), stride=(2,16,16))                                                                                                                                        
+  - 输出 [B, 8, 14, 14] 个 token（8 时间 × 14 高 × 14 宽 = 1568 tokens）
+  - ViT + AttentiveClassifier → 3 类 logits → Softmax                                                                                                                                                        
