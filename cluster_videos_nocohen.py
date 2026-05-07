@@ -37,6 +37,7 @@ def main():
     # --- 配置参数 ---
     # checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full_vaee1/best_vjepa_model.pt"
     checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model9639(paper).pt"
+    # data_dirs = ["/home/lx/alg/videos_val"]
     data_dirs = ["/home/lx/dataset/huigu_internal_0506"]
     tsne_dir = os.path.join('output', "tsne_internal0506",'ours')
     # data_dirs =["/home/lx/alg/videos_val", "/home/lx/alg/videos_test"]

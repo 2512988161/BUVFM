@@ -200,8 +200,8 @@ def _merge_temp_csvs(output_csv, world_size):
 def _print_metrics(output_csv):
     """打印混淆矩阵和准确率"""
     df = pd.read_csv(output_csv)
-    y_true = df['label'].astype(int).values
-    y_pred = df[['p0', 'p1', 'p2']].astype(float).values.argmax(axis=1)
+    y_true = df['label'].values
+    y_pred = df[['p0', 'p1', 'p2']].values.argmax(axis=1)
 
     acc = accuracy_score(y_true, y_pred)
     cm = confusion_matrix(y_true, y_pred)
