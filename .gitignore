@@ -44,6 +44,7 @@ vis.py
 distill/
 
 # Large files
-*.pt
-*.pth
+# *.pt
+# *.pth
 *.bin
+train_new.py

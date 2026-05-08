@@ -4,7 +4,8 @@ import gradio as gr
 import plotly.graph_objects as go
 
 from pipeline_utils import PipelineRunner
-
+import warnings
+warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -78,9 +79,8 @@ FLOWCHART_CSS = """
 """
 
 STAGE_INFO = {
-    "stage1": {"icon": "\U0001f50d", "title": "Stage 1", "model": "MobileNet + YOLO"},
-    "stage2": {"icon": "⚙️", "title": "Stage 2", "model": "nmODE-ResNet"},
-    "stage3": {"icon": "\U0001f9ec", "title": "Stage 3", "model": "VJEPA2 ViT-Giant"},
+    "stage1": {"icon": "\U0001f50d", "title": "Edge QC Model", "model": ""},
+    "stage2": {"icon": "\U0001f9ec", "title": "Cloud Risk Grading", "model": ""},
 }
 
 STATUS_LABELS = {
@@ -93,7 +93,7 @@ STATUS_LABELS = {
 
 
 def render_pipeline_flowchart(stage_results):
-    stages = ["stage1", "stage2", "stage3"]
+    stages = ["stage1", "stage2"]
     boxes = []
     arrows = []
 
@@ -105,7 +105,6 @@ def render_pipeline_flowchart(stage_results):
             f'<div class="stage-box {state}">'
             f'<div class="stage-icon">{info["icon"]}</div>'
             f'<div class="stage-title">{info["title"]}</div>'
-            f'<div class="stage-model">{info["model"]}</div>'
             f'<div class="stage-status">{label}</div>'
             f'</div>'
         )
@@ -130,7 +129,7 @@ def render_pipeline_flowchart(stage_results):
 
 
 # ---------------------------------------------------------------------------
-# Bar chart
+# Bar charts
 # ---------------------------------------------------------------------------
 
 CLASS_NAMES = ["Low Risk\n(Class 0)", "Medium Risk\n(Class 1)", "High Risk\n(Class 2)"]
@@ -153,12 +152,46 @@ def create_bar_chart(prediction):
         )
     ])
     fig.update_layout(
-        title=dict(text="VJEPA2 Classification Probabilities", font=dict(size=15)),
+        title=dict(text="Top Clip: 3-Class Probabilities", font=dict(size=15)),
         yaxis=dict(title="Probability", range=[0, 1], gridcolor="#e5e7eb"),
         xaxis=dict(gridcolor="#e5e7eb"),
         showlegend=False,
         height=280,
         margin=dict(t=40, b=30, l=50, r=20),
+        plot_bgcolor="white",
+    )
+    return fig
+
+
+def create_per_clip_bar_chart(clip_results):
+    """Grouped bar chart: one group per clip, predicted class highlighted green."""
+    if not clip_results:
+        return go.Figure()
+    n = len(clip_results)
+    fig = go.Figure()
+    for i, cr in enumerate(clip_results):
+        pred = cr["prediction"]
+        colors = [
+            CLASS_COLORS[c] if c != pred["predicted_class"] else "#22c55e"
+            for c in range(3)
+        ]
+        for c in range(3):
+            fig.add_trace(go.Bar(
+                x=[f"Clip {i + 1}"],
+                y=[pred["probs"][f"class_{c}"]],
+                marker_color=colors[c],
+                text=[f"{pred['probs'][f'class_{c}']:.1%}"],
+                textposition="inside",
+                textfont=dict(size=11, color="white"),
+                showlegend=False,
+            ))
+    fig.update_layout(
+        barmode="group",
+        title=dict(text="Per-Clip Classification", font=dict(size=14)),
+        yaxis=dict(title="Probability", range=[0, 1], gridcolor="#e5e7eb"),
+        xaxis=dict(gridcolor="#e5e7eb"),
+        height=240,
+        margin=dict(t=36, b=30, l=50, r=20),
         plot_bgcolor="white",
     )
     return fig
@@ -171,29 +204,24 @@ def create_bar_chart(prediction):
 def format_stage1_detail(result):
     cls = result["classification"]
     lines = [
-        f"**Classifier:** {cls['model_name']}",
         f"**Result:** {'Lesions detected' if cls['has_lesions'] else 'No lesions'}",
         f"**Confidence:** {cls['confidence']:.1%}",
     ]
-    if result["detection"]:
+    if result.get("detection") and result["detection"].get("boxes_found"):
         det = result["detection"]
-        lines += [
-            f"**Detector:** {det['model_name']}",
-            f"**Bounding boxes:** {det['num_boxes']}",
-        ]
+        lines.append(
+            f"**Boxes found:** {det['num_boxes']} across "
+            f"{det.get('frames_with_boxes', '?')} frame(s)")
+    if result.get("clip_regions"):
+        lines.append(f"**Clips detected:** {len(result['clip_regions'])}")
+        for cr in result["clip_regions"]:
+            lines.append(
+                f"  - `{cr['label']}`: frames "
+                f"{cr['start_frame'] + 1}–{cr['end_frame'] + 1}")
     return "\n".join(lines)
 
 
 def format_stage2_detail(result):
-    cls = result["classification"]
-    return "\n".join([
-        f"**Model:** {cls['model_name']}",
-        f"**Result:** {'Lesions confirmed' if cls['has_lesions'] else 'No lesions'}",
-        f"**Confidence:** {cls['confidence']:.1%}",
-    ])
-
-
-def format_stage3_detail(result):
     pred = result["prediction"]
     lines = [
         f"**Predicted class:** {pred['predicted_class']}",
@@ -206,24 +234,59 @@ def format_stage3_detail(result):
     return "\n".join(lines)
 
 
+def format_clip_summary(clip_results, top_idx):
+    if not clip_results:
+        return ""
+    lines = ["### Clip Results\n"]
+    for i, cr in enumerate(clip_results):
+        pred = cr["prediction"]
+        star = " ⬅ top risk" if i == top_idx else ""
+        lines.append(
+            f"- **Clip {i + 1}**: Class {pred['predicted_class']} "
+            f"({pred['confidence']:.1%}){star}"
+        )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Pipeline callback
 # ---------------------------------------------------------------------------
 
+def _empty_outputs(clips):
+    """Return a dict that resets / hides all 16 output components."""
+    base = {
+        flowchart: render_pipeline_flowchart({}),
+        s1_status: "",
+        s1_detail: "",
+        s1_montage_image: gr.update(visible=False, value=None),
+        s2_status: "",
+        s2_detail: "",
+        s2_clip_summary: "",
+        s2_clip_bar_chart: gr.update(visible=False, value=None),
+        s2_bar_chart: gr.update(visible=False, value=None),
+        s2_gradcam_video: gr.update(visible=False, value=None),
+        s2_gradcam_summary: gr.update(visible=False, value=None),
+    }
+    for slot in clips:
+        base[slot] = gr.update(visible=False, value=None)
+    return base
+
+
+def _set_clip_outputs(clip_paths, outputs, clips):
+    """Populate the 5 clip Video slots based on clip_paths length."""
+    n = len(clip_paths) if clip_paths else 0
+    for i, slot in enumerate(clips):
+        outputs[slot] = gr.update(
+            visible=i < n, value=clip_paths[i] if i < n else None)
+
+
 def run_pipeline(video_path):
+    clips = [s1_clip_0, s1_clip_1, s1_clip_2, s1_clip_3, s1_clip_4]
+
     if video_path is None:
         yield {
-            flowchart: render_pipeline_flowchart({}),
+            **_empty_outputs(clips),
             s1_status: "Please upload a video first.",
-            s1_detail: "",
-            s1_bbox_image: gr.update(visible=False, value=None),
-            s2_status: "",
-            s2_detail: "",
-            s3_status: "",
-            s3_detail: "",
-            s3_bar_chart: gr.update(visible=False, value=None),
-            s3_gradcam_video: gr.update(visible=False, value=None),
-            s3_gradcam_summary: gr.update(visible=False, value=None),
         }
         return
 
@@ -231,25 +294,14 @@ def run_pipeline(video_path):
     stage_state = {}
 
     # Reset
-    yield {
-        flowchart: render_pipeline_flowchart({}),
-        s1_status: "",
-        s1_detail: "",
-        s1_bbox_image: gr.update(visible=False, value=None),
-        s2_status: "",
-        s2_detail: "",
-        s3_status: "",
-        s3_detail: "",
-        s3_bar_chart: gr.update(visible=False, value=None),
-        s3_gradcam_video: gr.update(visible=False, value=None),
-        s3_gradcam_summary: gr.update(visible=False, value=None),
-    }
+    yield _empty_outputs(clips)
 
-    # === Stage 1 ===
+    # === Stage 1: Edge QC Model ===
     stage_state["stage1"] = "running"
     yield {
+        **_empty_outputs(clips),
         flowchart: render_pipeline_flowchart(stage_state),
-        s1_status: "⏳ Running classification + detection...",
+        s1_status: "⏳ Running non-valid detection + lesion detection...",
     }
 
     s1 = pipe.run_stage1(video_path)
@@ -257,64 +309,75 @@ def run_pipeline(video_path):
 
     if s1["status"] == "stop":
         stage_state["stage2"] = "stop"
-        stage_state["stage3"] = "stop"
-        yield {
+        out = {
+            **_empty_outputs(clips),
             flowchart: render_pipeline_flowchart(stage_state),
             s1_status: f"❌ STOPPED — {s1['message']}",
             s1_detail: format_stage1_detail(s1),
-            s1_bbox_image: gr.update(visible=False, value=None),
         }
+        if s1.get("montage_image") is not None:
+            out[s1_montage_image] = gr.update(visible=True, value=s1["montage_image"])
+        yield out
         return
 
-    yield {
+    # Stage 1 passed
+    s1_pass = {
+        **_empty_outputs(clips),
         flowchart: render_pipeline_flowchart(stage_state),
         s1_status: f"✅ PASSED — {s1['message']}",
         s1_detail: format_stage1_detail(s1),
-        s1_bbox_image: gr.update(visible=True, value=s1["annotated_frame"]),
+        s1_montage_image: gr.update(visible=True, value=s1["montage_image"]),
     }
+    _set_clip_outputs(s1.get("clip_video_paths"), s1_pass, clips)
+    yield s1_pass
 
-    # === Stage 2 ===
+    # === Stage 2: Cloud Risk Grading Foundation Model ===
     stage_state["stage2"] = "running"
-    yield {
+    s2_running = {
+        **_empty_outputs(clips),
         flowchart: render_pipeline_flowchart(stage_state),
-        s2_status: "⏳ Running refinement classification...",
+        # Preserve Stage 1 outputs
+        s1_status: s1_pass[s1_status],
+        s1_detail: s1_pass[s1_detail],
+        s1_montage_image: s1_pass[s1_montage_image],
+        s1_clip_0: s1_pass[s1_clip_0],
+        s1_clip_1: s1_pass[s1_clip_1],
+        s1_clip_2: s1_pass[s1_clip_2],
+        s1_clip_3: s1_pass[s1_clip_3],
+        s1_clip_4: s1_pass[s1_clip_4],
+        s2_status: "⏳ Running risk grading + Grad-CAM...",
     }
+    yield s2_running
 
-    s2 = pipe.run_stage2(video_path)
+    clip_paths = s1.get("clip_video_paths") or []
+    s2 = pipe.run_stage3(video_path, clip_paths=clip_paths if clip_paths else None)
     stage_state["stage2"] = s2["status"]
 
-    if s2["status"] == "stop":
-        stage_state["stage3"] = "stop"
-        yield {
-            flowchart: render_pipeline_flowchart(stage_state),
-            s2_status: f"❌ STOPPED — {s2['message']}",
-            s2_detail: format_stage2_detail(s2),
-        }
-        return
+    clip_results = s2.get("clip_results")
+    has_clips = clip_results is not None and len(clip_results) > 0
 
     yield {
+        **_empty_outputs(clips),
         flowchart: render_pipeline_flowchart(stage_state),
-        s2_status: f"✅ PASSED — {s2['message']}",
+        # Preserve Stage 1 outputs
+        s1_status: s1_pass[s1_status],
+        s1_detail: s1_pass[s1_detail],
+        s1_montage_image: s1_pass[s1_montage_image],
+        s1_clip_0: s1_pass[s1_clip_0],
+        s1_clip_1: s1_pass[s1_clip_1],
+        s1_clip_2: s1_pass[s1_clip_2],
+        s1_clip_3: s1_pass[s1_clip_3],
+        s1_clip_4: s1_pass[s1_clip_4],
+        # Stage 2 results
+        s2_status: f"✅ COMPLETE — Predicted: Class {s2['prediction']['predicted_class']}",
         s2_detail: format_stage2_detail(s2),
-    }
-
-    # === Stage 3 ===
-    stage_state["stage3"] = "running"
-    yield {
-        flowchart: render_pipeline_flowchart(stage_state),
-        s3_status: "⏳ Running VJEPA2 classification + Grad-CAM...",
-    }
-
-    s3 = pipe.run_stage3(video_path)
-    stage_state["stage3"] = s3["status"]
-
-    yield {
-        flowchart: render_pipeline_flowchart(stage_state),
-        s3_status: f"✅ COMPLETE — Predicted: Class {s3['prediction']['predicted_class']}",
-        s3_detail: format_stage3_detail(s3),
-        s3_bar_chart: gr.update(visible=True, value=create_bar_chart(s3["prediction"])),
-        s3_gradcam_video: gr.update(visible=True, value=s3["gradcam_compare_path"]),
-        s3_gradcam_summary: gr.update(visible=True, value=s3["gradcam_summary"]),
+        s2_clip_summary: format_clip_summary(clip_results, s2.get("top_clip_index", -1)),
+        s2_clip_bar_chart: gr.update(
+            visible=has_clips,
+            value=create_per_clip_bar_chart(clip_results) if has_clips else None),
+        s2_bar_chart: gr.update(visible=True, value=create_bar_chart(s2["prediction"])),
+        s2_gradcam_video: gr.update(visible=True, value=s2["gradcam_compare_path"]),
+        s2_gradcam_summary: gr.update(visible=True, value=s2["gradcam_summary"]),
     }
 
 
@@ -331,7 +394,7 @@ video { max-width: 100%; max-height: 360px; object-fit: contain; }
 with gr.Blocks(title="Medical Video Classification Pipeline") as demo:
     gr.Markdown("# Medical Video Classification Pipeline", elem_id="main-title")
     gr.Markdown(
-        "3-stage cascaded inference: rapid filtering → refinement → VJEPA2 classification with Grad-CAM",
+        "2-stage cascaded inference: Edge QC Model → Cloud Risk Grading Foundation Model",
         elem_id="main-subtitle",
     )
 
@@ -343,7 +406,7 @@ with gr.Blocks(title="Medical Video Classification Pipeline") as demo:
         with gr.Column(scale=1):
             gr.Markdown("### Example Videos")
             example_videos = {}
-            for cls_label, cls_name in [("Class 0 — Low Risk", 0), ("Class 1 — Medium Risk", 1), ("Class 2 — High Risk", 2)]:
+            for cls_label, cls_name in [("Class 0 — Low Risk", 0), ("Class 1 — Medium Risk", 1), ("Class 2 — High Risk", 2), ("Class NO — No Lesion", "NO")]:
                 gr.Markdown(f"**{cls_label}**")
                 with gr.Row():
                     for i in range(5):
@@ -358,32 +421,42 @@ with gr.Blocks(title="Medical Video Classification Pipeline") as demo:
     run_btn = gr.Button("Run Pipeline", variant="primary", size="lg")
 
     with gr.Row():
+        # ========== Stage 1 ==========
         with gr.Column(scale=1):
-            gr.Markdown("### Stage 1: Rapid Filter")
+            gr.Markdown("### Stage 1: Edge QC Model")
             s1_status = gr.Markdown("")
             s1_detail = gr.Markdown("")
-            s1_bbox_image = gr.Image(label="Detected Regions", visible=False)
+            s1_montage_image = gr.Image(label="16-Frame Lesion Detection Montage", visible=False)
 
+            gr.Markdown("#### Detected Lesion Clips")
+            with gr.Row():
+                s1_clip_0 = gr.Video(label="Clip 1", visible=False)
+                s1_clip_1 = gr.Video(label="Clip 2", visible=False)
+            with gr.Row():
+                s1_clip_2 = gr.Video(label="Clip 3", visible=False)
+                s1_clip_3 = gr.Video(label="Clip 4", visible=False)
+            s1_clip_4 = gr.Video(label="Clip 5", visible=False)
+
+        # ========== Stage 2 ==========
         with gr.Column(scale=1):
-            gr.Markdown("### Stage 2: Refinement")
+            gr.Markdown("### Stage 2: Cloud Risk Grading")
             s2_status = gr.Markdown("")
             s2_detail = gr.Markdown("")
-
-        with gr.Column(scale=1):
-            gr.Markdown("### Stage 3: Classification")
-            s3_status = gr.Markdown("")
-            s3_detail = gr.Markdown("")
-            s3_bar_chart = gr.Plot(label="3-Class Probabilities", visible=False)
-            s3_gradcam_video = gr.Video(label="Grad-CAM Overlay", visible=False)
-            s3_gradcam_summary = gr.Image(label="Grad-CAM Summary", visible=False)
+            s2_clip_summary = gr.Markdown("")
+            s2_clip_bar_chart = gr.Plot(label="Per-Clip Probabilities", visible=False)
+            s2_bar_chart = gr.Plot(label="Top Clip: 3-Class Probabilities", visible=False)
+            s2_gradcam_video = gr.Video(label="Grad-CAM Overlay", visible=False)
+            s2_gradcam_summary = gr.Image(label="Grad-CAM Summary", visible=False)
 
     run_btn.click(
         fn=run_pipeline,
         inputs=[input_video],
         outputs=[
-            flowchart, s1_status, s1_detail, s1_bbox_image,
-            s2_status, s2_detail,
-            s3_status, s3_detail, s3_bar_chart, s3_gradcam_video, s3_gradcam_summary,
+            flowchart,
+            s1_status, s1_detail, s1_montage_image,
+            s1_clip_0, s1_clip_1, s1_clip_2, s1_clip_3, s1_clip_4,
+            s2_status, s2_detail, s2_clip_summary, s2_clip_bar_chart,
+            s2_bar_chart, s2_gradcam_video, s2_gradcam_summary,
         ],
     )
 
