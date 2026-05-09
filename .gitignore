@@ -42,6 +42,7 @@ pretraining/output/
 convert_video.py
 vis.py
 distill/
+QC/.claude/
 
 # Large files
 # *.pt

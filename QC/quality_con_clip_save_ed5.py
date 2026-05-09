@@ -33,9 +33,9 @@ OUTPUT_JSON_NAME = "merged_models_frame_results_desensitization_class_0506.json"
 CLIP_SAVE_DIR = "reader_study_clip_save" # 提取的clip保存主文件夹
 
 # --- 模型路径 ---
-YOLO_MODEL_PATH = './ckpt_241222/best_640_s_60e.pt'
+YOLO_MODEL_PATH = './best_640_s_60e(2).pt'
 # MobileNet (SVM) 路径
-SVM_MODEL_PATH = './ckpt_241222/mobilenetv3_small_075_yl_241222.pth'
+SVM_MODEL_PATH = './mobilenetv3_small_075_yl_241222(3).pth'
 
 # --- 硬件参数 ---
 NUM_GPUS = 4            

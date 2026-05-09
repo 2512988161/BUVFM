@@ -1,13 +1,15 @@
 import os
-import random
 import tempfile
 
 import cv2
 import imageio.v3 as iio
 import numpy as np
+import timm
 import torch
 import torch.nn.functional as F
 from decord import VideoReader, cpu
+from PIL import Image
+from torchvision import transforms
 
 from buildmodel import build_model
 from utils import make_transforms
@@ -244,83 +246,263 @@ def frames_to_video_file(frames, fps=8, prefix="gradcam"):
     return path
 
 
+YOLO_MODEL_PATH = "./QC/best_640_s_60e(2).pt"
+SVM_MODEL_PATH = "./QC/mobilenetv3_small_075_yl_241222(3).pth"
+YOLO_IMG_SIZE = 256
+YOLO_EXCLUDE_CLASS = 1
+YOLO_CONF_THRESHOLD = 0.5
+BATCH_SIZE = 16
+
+
+def resolve_device():
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def build_mobilenet(device):
+    model = timm.create_model("mobilenetv3_small_075", pretrained=False, in_chans=3, num_classes=2).to(device)
+    if not os.path.exists(SVM_MODEL_PATH):
+        raise FileNotFoundError(f"MobileNet checkpoint not found: {SVM_MODEL_PATH}")
+    model.load_state_dict(torch.load(SVM_MODEL_PATH, map_location=device))
+    model.eval()
+    return model
+
+
+def build_yolo(device):
+    from ultralytics import YOLO
+
+    model = YOLO(YOLO_MODEL_PATH)
+    model(np.zeros((YOLO_IMG_SIZE, YOLO_IMG_SIZE, 3), dtype=np.uint8), device=str(device), verbose=False)
+    return model
+
+
+def load_stage1_models(device):
+    mobilenet_model = build_mobilenet(device)
+    try:
+        yolo_model = build_yolo(device)
+        yolo_device = device
+    except torch.AcceleratorError as e:
+        if device.type != "cuda":
+            raise
+        print(f"YOLO CUDA init failed, fallback to CPU: {e}")
+        yolo_model = build_yolo(torch.device("cpu"))
+        yolo_device = torch.device("cpu")
+    return mobilenet_model, yolo_model, yolo_device
+
+
+def build_stage1_preprocess():
+    return transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+
+
+def draw_mobilenet_score(frame, score):
+    valid = 1.0 - score
+    text = f"Valid {valid:.2f}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.42
+    text_thickness = 1
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, text_thickness)
+    x = frame.shape[1] - tw - 4
+    y = th + 4
+    cv2.putText(
+        frame,
+        text,
+        (x, y),
+        font,
+        scale,
+        (245, 245, 245),
+        text_thickness,
+        cv2.LINE_AA,
+    )
+
+
+def draw_yolo_boxes(frame, boxes):
+    color = (0, 215, 120)
+    for box in boxes:
+        x1, y1, x2, y2 = map(int, box["xyxy"])
+        conf = float(box["conf"])
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
+        label = f"{conf:.2f}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        scale = 0.42
+        text_thickness = 1
+        (_, th), baseline = cv2.getTextSize(label, font, scale, text_thickness)
+        text_y = y1 - 2
+        if text_y - th < 0:
+            text_y = min(frame.shape[0] - baseline - 1, y1 + th + 2)
+        cv2.putText(
+            frame,
+            label,
+            (x1 + 1, text_y),
+            font,
+            scale,
+            (245, 245, 245),
+            text_thickness,
+            cv2.LINE_AA,
+        )
+
+
+def infer_stage1_batch(batch_frames, start_idx, mobilenet_model, yolo_model, preprocess, mobilenet_device, yolo_device):
+    imgs_pil = [Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in batch_frames]
+    mobilenet_tensors = torch.stack([preprocess(img) for img in imgs_pil]).to(mobilenet_device)
+
+    with torch.inference_mode():
+        logits = mobilenet_model(mobilenet_tensors)
+        probs = F.softmax(logits, dim=1)
+        mobilenet_scores = probs[:, 1].cpu().tolist()
+
+    yolo_scores = [0.0] * len(batch_frames)
+    yolo_boxes = [[] for _ in batch_frames]
+    yolo_indices = [idx for idx, score in enumerate(mobilenet_scores) if score < 0.5]
+    if yolo_indices:
+        yolo_inputs = [batch_frames[idx] for idx in yolo_indices]
+        yolo_results = yolo_model(
+            yolo_inputs,
+            imgsz=YOLO_IMG_SIZE,
+            conf=YOLO_CONF_THRESHOLD,
+            device=str(yolo_device),
+            verbose=False,
+        )
+        for result_idx, batch_idx in enumerate(yolo_indices):
+            result = yolo_results[result_idx]
+            if result.boxes is None:
+                continue
+            frame_boxes = []
+            for box in result.boxes:
+                if int(box.cls[0]) == YOLO_EXCLUDE_CLASS:
+                    continue
+                conf = float(box.conf[0])
+                xyxy = [float(v) for v in box.xyxy[0].tolist()]
+                frame_boxes.append({
+                    "xyxy": xyxy,
+                    "conf": conf,
+                    "cls": int(box.cls[0]),
+                })
+            yolo_boxes[batch_idx] = frame_boxes
+            yolo_scores[batch_idx] = max((box["conf"] for box in frame_boxes), default=0.0)
+
+    batch_results = []
+    annotated_frames = []
+    for offset, frame in enumerate(batch_frames):
+        mobilenet_score = mobilenet_scores[offset]
+        yolo_score = yolo_scores[offset]
+        boxes = yolo_boxes[offset]
+
+        annotated = frame.copy()
+        draw_yolo_boxes(annotated, boxes)
+        draw_mobilenet_score(annotated, mobilenet_score)
+        annotated_frames.append(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
+
+        batch_results.append({
+            "frame_idx": start_idx + offset,
+            "yolo_score": round(yolo_score, 4),
+            "mobilenet_score": round(mobilenet_score, 4),
+            "yolo_boxes": [
+                {
+                    "xyxy": [round(v, 2) for v in box["xyxy"]],
+                    "conf": round(box["conf"], 4),
+                    "cls": box["cls"],
+                }
+                for box in boxes
+            ],
+        })
+    return batch_results, annotated_frames
+
+
 # ---------------------------------------------------------------------------
-# Stage 1: Rapid Negative Filtering (placeholder)
+# Stage 1: Rapid Negative Filtering (real)
 # ---------------------------------------------------------------------------
 
 class Stage1Filter:
-    """Lightweight classifier + detector placeholder.
+    """MobileNet + YOLO stage-1 screening."""
 
-    Replace classify() and detect_boxes() internals with real
-    MobileNet / YOLO when available.
-    """
+    def __init__(self, device=None, batch_size=BATCH_SIZE):
+        self.device = device or resolve_device()
+        self.batch_size = batch_size
+        self.mobilenet_model, self.yolo_model, self.yolo_device = load_stage1_models(self.device)
+        self.preprocess = build_stage1_preprocess()
 
-    def __init__(self, device=None):
-        self.device = device
+    def run(self, video_path):
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise RuntimeError(f"Failed to open video: {video_path}")
 
-    def classify(self, video_path):
-        """Check if video likely contains lesions. 70 % positive rate."""
-        has_lesions = random.random() < 0.70
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        frame_results = []
+        annotated_frames = []
+        batch_frames = []
+        frame_idx = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            batch_frames.append(frame)
+            if len(batch_frames) == self.batch_size:
+                batch_results, batch_annotated_frames = infer_stage1_batch(
+                    batch_frames,
+                    frame_idx - len(batch_frames) + 1,
+                    self.mobilenet_model,
+                    self.yolo_model,
+                    self.preprocess,
+                    self.device,
+                    self.yolo_device,
+                )
+                frame_results.extend(batch_results)
+                annotated_frames.extend(batch_annotated_frames)
+                batch_frames = []
+            frame_idx += 1
+
+        if batch_frames:
+            batch_results, batch_annotated_frames = infer_stage1_batch(
+                batch_frames,
+                frame_idx - len(batch_frames),
+                self.mobilenet_model,
+                self.yolo_model,
+                self.preprocess,
+                self.device,
+                self.yolo_device,
+            )
+            frame_results.extend(batch_results)
+            annotated_frames.extend(batch_annotated_frames)
+
+        cap.release()
+
+        if not frame_results:
+            raise RuntimeError(f"No frames decoded from video: {video_path}")
+
+        annotated_video_path = frames_to_video_file(annotated_frames, fps=fps, prefix="stage1_annotated")
+        valid_frames = sum(1 for result in frame_results if result["mobilenet_score"] < 0.5)
+        detected_frames = sum(1 for result in frame_results if result["yolo_boxes"])
+        max_yolo_conf = max((result["yolo_score"] for result in frame_results), default=0.0)
+        mean_valid_score = sum(1.0 - result["mobilenet_score"] for result in frame_results) / len(frame_results)
+        has_lesions = valid_frames > 0 and detected_frames > 0
+
         return {
-            "has_lesions": has_lesions,
-            "confidence": round(random.uniform(0.55, 0.95), 3),
-            "model_name": "MobileNet-V3 (placeholder)",
-        }
-
-    def detect_boxes(self, video_path):
-        """Run lightweight detector for bounding boxes. 80 % box-found rate."""
-        boxes_found = random.random() < 0.80
-        num_boxes = random.randint(1, 3) if boxes_found else 0
-        boxes = []
-        for _ in range(num_boxes):
-            x1 = random.uniform(0.05, 0.35)
-            y1 = random.uniform(0.05, 0.35)
-            x2 = random.uniform(x1 + 0.15, min(x1 + 0.55, 0.95))
-            y2 = random.uniform(y1 + 0.15, min(y1 + 0.55, 0.95))
-            boxes.append([x1, y1, x2, y2])
-
-        annotated_frame = None
-        if boxes_found:
-            try:
-                buffer, _ = load_video_frames(video_path)
-                mid_frame = buffer[len(buffer) // 2].copy()
-                h, w = mid_frame.shape[:2]
-                for box in boxes:
-                    pt1 = (int(box[0] * w), int(box[1] * h))
-                    pt2 = (int(box[2] * w), int(box[3] * h))
-                    cv2.rectangle(mid_frame, pt1, pt2, (0, 255, 0), 2)
-                    cv2.putText(mid_frame, "lesion", (pt1[0], pt1[1] - 5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                annotated_frame = cv2.cvtColor(mid_frame, cv2.COLOR_BGR2RGB)
-            except Exception:
-                pass
-
-        return {
-            "boxes_found": boxes_found,
-            "num_boxes": num_boxes,
-            "boxes": boxes,
-            "annotated_frame": annotated_frame,
-            "model_name": "YOLOv8-nano (placeholder)",
-        }
-
-
-# ---------------------------------------------------------------------------
-# Stage 2: Medium-weight refinement (placeholder)
-# ---------------------------------------------------------------------------
-
-class Stage2Filter:
-    """nmODE-ResNet placeholder. Replace with real model when available."""
-
-    def __init__(self, device=None):
-        self.device = device
-
-    def classify(self, video_path):
-        """Further filter non-lesion videos. 80 % positive rate."""
-        has_lesions = random.random() < 0.80
-        return {
-            "has_lesions": has_lesions,
-            "confidence": round(random.uniform(0.60, 0.98), 3),
-            "model_name": "nmODE-ResNet18 (placeholder)",
+            "status": "pass" if has_lesions else "stop",
+            "message": (
+                f"{valid_frames}/{len(frame_results)} valid frames, "
+                f"{detected_frames} frames with detections, max YOLO conf {max_yolo_conf:.3f}."
+            ),
+            "classification": {
+                "has_lesions": has_lesions,
+                "confidence": float(mean_valid_score),
+                "model_name": "MobileNet-V3 + YOLO",
+                "valid_frames": valid_frames,
+                "total_frames": len(frame_results),
+            },
+            "detection": {
+                "boxes_found": detected_frames > 0,
+                "num_boxes": sum(len(result["yolo_boxes"]) for result in frame_results),
+                "frames_with_boxes": detected_frames,
+                "max_confidence": float(max_yolo_conf),
+                "model_name": "YOLO",
+            },
+            "frame_results": frame_results,
+            "annotated_video_path": annotated_video_path,
         }
 
 
@@ -465,7 +647,8 @@ class Stage3Classifier:
 
         header = np.zeros((30, summary.shape[1], 3), dtype=np.uint8)
         prob_text = "  ".join([f"C{c}:{probs[0, c]:.3f}" for c in range(self.num_classes)])
-        cv2.putText(header, f"Pred: Class {pred_class} | {prob_text}", (10, 22),
+        pred_label = "Class 0 (Low Risk / No Lesion)" if pred_class == 0 else f"Class {pred_class}"
+        cv2.putText(header, f"Pred: {pred_label} | {prob_text}", (10, 22),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
         summary_with_header = np.concatenate([header, summary], axis=0)
 
@@ -492,7 +675,6 @@ class PipelineRunner:
 
     def __init__(self, stage3_checkpoint_path):
         self.stage1 = Stage1Filter()
-        self.stage2 = Stage2Filter()
         self.stage3 = None
         self.stage3_checkpoint = stage3_checkpoint_path
 
@@ -501,109 +683,37 @@ class PipelineRunner:
             self.stage3 = Stage3Classifier(self.stage3_checkpoint)
 
     def run_stage1(self, video_path):
-        cls_result = self.stage1.classify(video_path)
-        if not cls_result["has_lesions"]:
+        stage1_result = self.stage1.run(video_path)
+        if stage1_result["status"] == "stop":
             return {
                 "status": "stop",
-                "classification": cls_result,
-                "detection": None,
-                "message": "No lesions detected by classifier. Pipeline stopped.",
-                "montage_image": None,
-                "frame_info": None,
-                "clip_regions": [],
-                "clip_video_paths": [],
+                "classification": stage1_result["classification"],
+                "detection": stage1_result["detection"],
+                "message": stage1_result["message"],
+                "frame_results": stage1_result["frame_results"],
+                "annotated_video_path": stage1_result["annotated_video_path"],
             }
 
-        montage_result = build_16frame_montage_with_timeline(video_path)
-
-        any_boxes = any(fi["boxes_found"] for fi in montage_result["frame_info"])
-        if not any_boxes:
-            return {
-                "status": "stop",
-                "classification": cls_result,
-                "detection": {"boxes_found": False, "num_boxes": 0},
-                "message": "No lesion regions found by detector. Pipeline stopped.",
-                "montage_image": montage_result["montage_image"],
-                "frame_info": montage_result["frame_info"],
-                "clip_regions": [],
-                "clip_video_paths": [],
-            }
-
-        total_boxes = sum(fi["num_boxes"] for fi in montage_result["frame_info"])
-        n_frames = sum(1 for fi in montage_result["frame_info"] if fi["boxes_found"])
         return {
             "status": "pass",
-            "classification": cls_result,
-            "detection": {
-                "boxes_found": True,
-                "num_boxes": total_boxes,
-                "frames_with_boxes": n_frames,
-            },
-            "message": (f"{total_boxes} lesion region(s) across {n_frames} frames. "
-                        f"{len(montage_result['clip_video_paths'])} clip(s) extracted."),
-            "montage_image": montage_result["montage_image"],
-            "frame_info": montage_result["frame_info"],
-            "clip_regions": montage_result["clip_regions"],
-            "clip_video_paths": montage_result["clip_video_paths"],
-        }
-
-    def run_stage2(self, video_path):
-        result = self.stage2.classify(video_path)
-        if not result["has_lesions"]:
-            return {
-                "status": "stop",
-                "classification": result,
-                "message": "No lesions confirmed. Pipeline stopped.",
-            }
-        return {
-            "status": "pass",
-            "classification": result,
-            "message": "Lesions confirmed. Proceeding to classification...",
+            "classification": stage1_result["classification"],
+            "detection": stage1_result["detection"],
+            "message": stage1_result["message"],
+            "frame_results": stage1_result["frame_results"],
+            "annotated_video_path": stage1_result["annotated_video_path"],
         }
 
     def run_stage3(self, video_path, clip_paths=None):
         self._ensure_stage3()
 
-        if not clip_paths:
-            # Fallback: single video
-            pred = self.stage3.predict(video_path)
-            gradcam_result = self.stage3.gradcam(video_path, target_class=pred["predicted_class"])
-            overlay_path = frames_to_video_file(gradcam_result["overlay_frames"], prefix="overlay")
-            compare_path = frames_to_video_file(gradcam_result["comparison_frames"], prefix="compare")
-            return {
-                "status": "complete",
-                "prediction": pred,
-                "clip_results": None,
-                "top_clip_index": -1,
-                "gradcam_compare_path": compare_path,
-                "gradcam_summary": gradcam_result["summary_image"],
-            }
-
-        # Multi-clip: classify each clip, pick top-risk
-        clip_predictions = []
-        for i, cp in enumerate(clip_paths):
-            pred = self.stage3.predict(cp)
-            clip_predictions.append({
-                "clip_index": i,
-                "prediction": pred,
-                "video_path": cp,
-            })
-
-        top = max(clip_predictions,
-                  key=lambda x: (x["prediction"]["predicted_class"],
-                                 x["prediction"]["confidence"]))
-        top_idx = top["clip_index"]
-
-        gradcam_result = self.stage3.gradcam(
-            clip_paths[top_idx], target_class=top["prediction"]["predicted_class"])
-        overlay_path = frames_to_video_file(gradcam_result["overlay_frames"], prefix="overlay")
+        pred = self.stage3.predict(video_path)
+        gradcam_result = self.stage3.gradcam(video_path, target_class=pred["predicted_class"])
         compare_path = frames_to_video_file(gradcam_result["comparison_frames"], prefix="compare")
-
         return {
             "status": "complete",
-            "prediction": top["prediction"],
-            "clip_results": clip_predictions,
-            "top_clip_index": top_idx,
+            "prediction": pred,
+            "clip_results": None,
+            "top_clip_index": -1,
             "gradcam_compare_path": compare_path,
             "gradcam_summary": gradcam_result["summary_image"],
         }
