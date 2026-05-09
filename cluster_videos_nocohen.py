@@ -35,11 +35,11 @@ def parse_patient_id(filename):
 
 def main():
     # --- 配置参数 ---
-    # checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full_vaee1/best_vjepa_model.pt"
-    checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model9639(paper).pt"
+    checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full_maee1/best_vjepa_model8291.pt"
+    # checkpoint_path = "/home/lx/baselines/vjepa/ckpts/vjepa_full/best_vjepa_model9639(paper).pt"
     # data_dirs = ["/home/lx/alg/videos_val"]
-    data_dirs = ["/home/lx/dataset/huigu_internal_0506"]
-    tsne_dir = os.path.join('output', "tsne_internal0506",'ours')
+    data_dirs = ["/home/lx/dataset/huigu_external_0506"]
+    tsne_dir = os.path.join('output', "tsne_external0506",'mae')
     # data_dirs =["/home/lx/alg/videos_val", "/home/lx/alg/videos_test"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
