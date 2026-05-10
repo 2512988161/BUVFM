@@ -85,9 +85,62 @@ def create_stage1_frame_chart(result):
         line=dict(color="#10b981", width=2.5),
         hovertemplate="Frame %{x}<br>YOLO %{y:.3f}<extra></extra>",
     ))
+
+    valid_ranges = []
+    start = None
+    prev_x = None
+    for xi, yolo, valid in zip(x, yolo_scores, valid_scores):
+        is_valid = yolo > 0.5 and valid > 0.5
+        if is_valid and start is None:
+            start = xi
+        if start is not None and (not is_valid or (prev_x is not None and xi != prev_x + 1)):
+            valid_ranges.append((start, prev_x))
+            start = xi if is_valid else None
+        prev_x = xi
+    if start is not None:
+        valid_ranges.append((start, prev_x))
+
+    shapes = [
+        dict(
+            type="line",
+            xref="paper",
+            x0=0,
+            x1=1,
+            yref="y",
+            y0=0.5,
+            y1=0.5,
+            line=dict(color="rgba(100, 116, 139, 0.35)", width=1, dash="dash"),
+        )
+    ]
+    for x0, x1 in valid_ranges:
+        shapes.append(
+            dict(
+                type="rect",
+                xref="x",
+                yref="paper",
+                x0=x0 - 0.45,
+                x1=x1 + 0.45,
+                y0=0,
+                y1=1,
+                fillcolor="rgba(34, 197, 94, 0.10)",
+                line=dict(width=0),
+                layer="below",
+            )
+        )
+
+    fig.add_trace(go.Scatter(
+        x=[None],
+        y=[None],
+        mode="markers",
+        marker=dict(size=10, color="rgba(34, 197, 94, 0.10)"),
+        name="Valid Frame",
+        showlegend=True,
+        hoverinfo="skip",
+    ))
+
     fig.update_layout(
         title=dict(text="Frame-wise Stage 1 Scores", font=dict(size=15)),
-        height=230,
+        height=320,
         margin=dict(t=40, b=30, l=45, r=20),
         plot_bgcolor="white",
         paper_bgcolor="white",
@@ -101,21 +154,9 @@ def create_stage1_frame_chart(result):
         xaxis=dict(title="Frame", gridcolor="#e5e7eb", zeroline=False),
         yaxis=dict(title="Score", range=[-0.05, 1.05], gridcolor="#e5e7eb", zeroline=False),
         hovermode="x unified",
-        shapes=[
-            dict(
-                type="line",
-                xref="paper",
-                x0=0,
-                x1=1,
-                yref="y",
-                y0=0.5,
-                y1=0.5,
-                line=dict(color="rgba(100, 116, 139, 0.35)", width=1, dash="dash"),
-            )
-        ],
+        shapes=shapes,
     )
     return fig
-
 
 # ---------------------------------------------------------------------------
 # Detail formatters
@@ -247,6 +288,7 @@ def run_pipeline(video_path):
 CUSTOM_CSS = """
 #main-title { text-align: center; margin-bottom: 18px; }
 video { max-width: 100%; max-height: 420px; object-fit: contain; }
+#input-preview video { max-height: 300px; }
 .gradio-container {
     max-width: 100% !important;
     width: 100% !important;
@@ -264,6 +306,56 @@ video { max-width: 100%; max-height: 420px; object-fit: contain; }
     margin-top: 16px;
     background: #ffffff;
     box-shadow: 0 6px 20px rgba(15, 23, 42, 0.05);
+}
+.example-video-btn {
+    width: 100%;
+}
+.example-video-btn button {
+    border: 1px solid #cbd5e1;
+    transition: all 0.2s ease;
+}
+.example-video-picker {
+    margin-top: 10px;
+}
+.example-video-picker .wrap {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+}
+.example-video-picker label {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    box-sizing: border-box;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    padding: 8px 12px;
+    background: #ffffff;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+.example-video-picker label span {
+    display: block;
+    width: 100%;
+    white-space: pre-line;
+    word-break: break-word;
+    line-height: 1.35;
+}
+.example-video-picker label span::first-line {
+    font-weight: 700;
+}
+.example-video-picker label:has(input:checked) {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    border-color: #1d4ed8;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+.example-video-picker label:has(input:checked) span {
+    color: #ffffff;
+    font-weight: 400;
+}
+.example-video-picker label:has(input:checked) span::first-line {
+    font-weight: 700;
 }
 .status-badge {
     padding: 12px 16px;
@@ -306,28 +398,44 @@ with gr.Blocks(
 
     with gr.Row(equal_height=True):
         with gr.Column(scale=1):
-            input_video = gr.Video(label="Upload Video", sources=["upload"], autoplay=True, loop=True)
+            input_video = gr.Video(
+                label="Upload Video",
+                sources=["upload"],
+                autoplay=True,
+                loop=True,
+                elem_id="input-preview",
+            )
         with gr.Column(scale=1):
             gr.Markdown("### Example Videos")
-            example_videos = {}
+            example_video_choices = []
+            example_video_paths = {}
             for cls_label, cls_name in [
                 ("Class 0 — Low Risk", 0),
                 ("Class 0 — No Lesion", "NO"),
                 ("Class 1 — Medium Risk", 1),
                 ("Class 2 — High Risk", 2),
             ]:
-                gr.Markdown(f"**{cls_label}**")
-                with gr.Row():
-                    for i in range(4):
-                        fname = f"CLASS{cls_name}_{i}.mp4"
-                        fpath = os.path.join(ASSETS_DIR, fname)
-                        btn = gr.Button(fname, size="sm", variant="secondary")
-                        example_videos[btn] = fpath
-
-            for btn, fpath in example_videos.items():
-                btn.click(fn=lambda p=fpath: p, inputs=[], outputs=[input_video])
+                for i in range(4):
+                    fname = f"CLASS{cls_name}_{i}.mp4"
+                    fpath = os.path.join(ASSETS_DIR, fname)
+                    display_name = f"{cls_label}\n{fname}"
+                    example_video_choices.append(display_name)
+                    example_video_paths[display_name] = fpath
+            example_picker = gr.Radio(
+                choices=example_video_choices,
+                value=None,
+                show_label=False,
+                container=False,
+                elem_classes=["example-video-picker"],
+            )
+            example_picker.change(
+                fn=lambda name, mapping=example_video_paths: mapping.get(name) if name else None,
+                inputs=[example_picker],
+                outputs=[input_video],
+            )
 
     run_btn = gr.Button("Run Pipeline", variant="primary", size="lg")
+    gr.Markdown("<span style='color:#64748b; font-size:14px;'>The model will be loaded during the first run of the pipeline.</span>")
 
     with gr.Column(visible=True, elem_classes=["result-card"]) as s1_panel:
         gr.Markdown("### Stage 1 Screening")
