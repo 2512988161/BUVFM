@@ -2,6 +2,42 @@
 
 Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embedding Predictive Architecture) ViT-Giant for medical ultrasound video classification, with a cascaded screening pipeline (MobileNetV3 + YOLO → VJEPA2). Supports multi-GPU distributed training and inference with mixed precision.
 
+## Hugging Face Space
+
+The Gradio demo in this repository is prepared for deployment to the Hugging Face Space `xenosscu/BUVFM`.
+
+### Space entrypoint
+
+- App entry: `app.py`
+- Dependencies: `requirements.txt`
+- Demo assets: `assets/`
+- Model weights used by the demo:
+  - `ckpts/vjepa_full/best_vjepa_model9639(paper).pt`
+  - `QC/best_640_s_60e(2).pt`
+  - `QC/mobilenetv3_small_075_yl_241222(3).pth`
+
+### Notes for the first Space version
+
+- This first deployment targets a **CPU Space**.
+- The app should start normally, but the first inference can be slow because the VJEPA2 checkpoint is large.
+- The model is loaded lazily on the first pipeline run.
+- If build time or repo size becomes a problem, the next step is to move weights to the Hugging Face Hub and download them at startup.
+
+### Local run
+
+```bash
+pip install -r requirements.txt
+python app.py
+```
+
+Optional environment variables:
+
+```bash
+export BUVFM_CHECKPOINT_PATH=/absolute/path/to/checkpoint.pt
+export BUVFM_ASSETS_DIR=/absolute/path/to/assets
+export BUVFM_MAX_FILE_SIZE_MB=100
+```
+
 ## Model Architecture
 
 - **Backbone**: ViT-Giant (`vit_giant_xformers`), 1408 embed dim, 40 layers, 22 heads, 224×224 input

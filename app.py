@@ -1,5 +1,6 @@
 import os
 import warnings
+from pathlib import Path
 
 import gradio as gr
 import plotly.graph_objects as go
@@ -12,10 +13,10 @@ warnings.filterwarnings("ignore")
 # Configuration
 # ---------------------------------------------------------------------------
 
-# CHECKPOINT_PATH = "./ckpts/vjepa-ori-ft20.pt"
-CHECKPOINT_PATH = "./ckpts/vjepa_full/best_vjepa_model9639(paper).pt"
-ASSETS_DIR = "./assets"
-PORT = 9530
+ROOT_DIR = Path(__file__).resolve().parent
+CHECKPOINT_PATH = os.getenv("BUVFM_CHECKPOINT_PATH", str(ROOT_DIR / "ckpts" / "vjepa_full" / "best_vjepa_model9639(paper).pt"))
+ASSETS_DIR = os.getenv("BUVFM_ASSETS_DIR", str(ROOT_DIR / "assets"))
+MAX_FILE_SIZE_MB = int(os.getenv("BUVFM_MAX_FILE_SIZE_MB", "100"))
 
 pipeline = None
 
@@ -389,7 +390,9 @@ video { max-width: 100%; max-height: 420px; object-fit: contain; }
 """
 
 with gr.Blocks(
-    title="Large-scale real-world validation of an AI-driven ultrasound breast cancer screening system in rural settings"
+    title="Large-scale real-world validation of an AI-driven ultrasound breast cancer screening system in rural settings",
+    theme=gr.themes.Soft(primary_hue="blue", secondary_hue="green"),
+    css=CUSTOM_CSS,
 ) as demo:
     gr.Markdown(
         "# Large-scale real-world validation of an AI-driven ultrasound breast cancer screening system in rural settings",
@@ -475,11 +478,4 @@ with gr.Blocks(
     )
 
 if __name__ == "__main__":
-    demo.launch(
-        server_name="0.0.0.0",
-        server_port=PORT,
-        share=False,
-        max_file_size=100 * 1024 * 1024,
-        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="green"),
-        css=CUSTOM_CSS,
-    )
+    demo.launch(server_name="0.0.0.0", share=False, max_file_size=f"{MAX_FILE_SIZE_MB}mb")

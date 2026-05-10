@@ -1,0 +1,14 @@
+gradio>=5.0.0
+plotly>=5.0.0
+torch>=2.0.0
+torchvision>=0.15.0
+decord
+opencv-python
+imageio[ffmpeg]
+timm
+ultralytics
+pillow
+numpy
+scikit-learn
+pandas
+tqdm
