@@ -1,41 +1,66 @@
-# VJEPA2 Video Classification
+# BUVFM — Breast Ultrasound Video Foundation Model
 
-Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embedding Predictive Architecture) for medical ultrasound video classification. Built on the ViT-Giant backbone with an Attentive Classifier head, supporting multi-GPU distributed training with mixed precision.
+Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embedding Predictive Architecture) ViT-Giant for medical ultrasound video classification, with a cascaded screening pipeline (MobileNetV3 + YOLO → VJEPA2). Supports multi-GPU distributed training and inference with mixed precision.
 
 ## Model Architecture
 
-- **Backbone**: ViT-Giant (`vit_giant_xformers`), 1408 embed dim, 40 layers, 224×224 input
-- **Patch embedding**: 3D tubelets of 2×16×16 (temporal×spatial)
-- **Clip aggregation**: Multi-clip temporal concatenation with optional positional embeddings
+- **Backbone**: ViT-Giant (`vit_giant_xformers`), 1408 embed dim, 40 layers, 22 heads, 224×224 input
+- **Position encoding**: 3D Rotary Position Embedding (RoPE) — no learned positional embeddings
+- **Patch embedding**: 3D tubelets of 2×16×16 (temporal×spatial) → 1568 tokens per 16-frame clip
+- **Clip aggregation**: Multi-clip temporal concatenation with optional 1D sincos positional embeddings
 - **Classifier**: Attentive Classifier with cross-attention pooling (16 heads, 1 probe block)
 - **Output**: 3-class classification (class_0, class_1, class_2)
+- **Alternative backbones**: Also supports `vit_large`, `vit_huge` via `--model_name`
 
 ## Project Structure
 
 ```
-vjepa/
-├── train.py              # Distributed training with DDP + AMP
-├── inference.py          # Validation set inference & evaluation
-├── test.py               # General-purpose inference on arbitrary video dirs
-├── vis.py                # Grad-CAM visualization for model interpretability
-├── app.py                # Gradio web application (3-stage pipeline demo)
-├── pipeline_utils.py     # Pipeline logic, model interfaces, shared utilities
-├── buildmodel.py         # Model construction & checkpoint loading
-├── mydataset.py          # VideoFolderDataset (ImageFolder-style for videos)
-├── utils.py              # Data augmentation & video transforms
+BUVFM/
+├── train.py                  # Single-stage fine-tuning with DDP + AMP
+├── train_new.py              # Enhanced training (FocalLoss + warmup + cosine LR)
+├── inference.py              # Single-GPU validation inference & evaluation
+├── inference_ddp.py          # Multi-GPU distributed inference (primary)
+├── inference_ddp_old.py      # Legacy DDP inference
+├── test.py                   # Arbitrary-dir inference (hardcoded config)
+├── app.py                    # Gradio 2-stage pipeline demo (port 9530)
+├── pipeline_utils.py         # 2-stage pipeline: MobileNet+YOLO + VJEPA2+Grad-CAM
+├── buildmodel.py             # Model construction & checkpoint loading
+├── mydataset.py              # VideoFolderDataset, InferenceVideoDataset, etc.
+├── utils.py                  # Data augmentation & video transforms
+├── cluster_videos_nocohen.py # t-SNE / PCA feature embedding visualization
 ├── src/
 │   ├── models/
-│   │   ├── vision_transformer.py   # ViT backbone
+│   │   ├── vision_transformer.py   # ViT backbone (giant/large/huge/tiny/...)
 │   │   ├── attentive_pooler.py     # Attentive classifier head
-│   │   └── ac_predictor.py         # Predictor module
-│   ├── masks/                      # Masking utilities
-│   ├── datasets/                   # Dataset utils & transforms
-│   └── utils/                      # Distributed, logging, schedulers
-├── ckpts/                          # Saved checkpoints (gitignored)
-├── assets/                         # Example videos for demo (15 videos, 5 per class)
-├── convert_video.py               # Transcode video to H.264 for browser playback
-├── logs_vjepa/                     # Training logs (gitignored)
-└── csvs/                           # Inference results (gitignored)
+│   │   ├── ac_predictor.py         # Action-conditioned predictor
+│   │   └── utils/                  # modules, patch_embed, pos_embs
+│   ├── masks/                      # Tube/block masking for VJEPA pretraining
+│   ├── datasets/                   # Video dataset utils & transforms
+│   │   └── utils/
+│   │       ├── video/              # RandAugment, RandErase, volume transforms
+│   │       ├── weighted_sampler.py
+│   │       ├── worker_init_fn.py
+│   │       └── dataloader.py
+│   └── utils/                      # Distributed, logging, schedulers, checkpoint loader
+├── pretraining/
+│   ├── run_pretrain_mae.py         # VideoMAEv2-style MAE pretraining entry
+│   ├── run_pretrain_vae.py         # VideoVAEPlus pretraining entry
+│   ├── convert_checkpoint.py       # Pretrain ckpt → build_model format
+│   ├── prepare_data.py             # Generate annotation files from raw videos
+│   ├── methods/                    # MAE/VAE modeling, datasets, engines, masking
+│   ├── data/                       # Generated annotation files
+│   └── output/                     # Pretraining outputs
+├── QC/
+│   ├── stage1.py                   # Standalone MobileNet+YOLO screener
+│   ├── quality_con_clip_save_ed5.py# Multi-GPU batch clip extraction
+│   ├── best_640_s_60e(2).pt        # YOLO detector weights
+│   └── mobilenetv3_small_075_yl_241222(3).pth  # MobileNetV3 classifier weights
+├── ckpts/
+│   ├── vjepa-nmode-pretrain.pt     # Standard pretrained weights (fine-tuning start)
+│   └── vjepa_full/                 # Fine-tuned checkpoints + eval CSVs
+├── assets/                         # 16 example videos (4 per category: Class0/1/2/NO)
+├── output/                         # Inference result CSVs & t-SNE outputs
+└── logs_vjepa/                     # Training logs (gitignored)
 ```
 
 ## Dependencies
@@ -52,11 +77,13 @@ vjepa/
 - gradio
 - plotly
 - imageio
+- [timm](https://github.com/huggingface/pytorch-image-models) (for MobileNetV3)
+- [ultralytics](https://github.com/ultralytics/ultralytics) (for YOLO)
 
 Install:
 
 ```bash
-pip install torch torchvision decord scikit-learn pandas tqdm numpy opencv-python gradio plotly
+pip install torch torchvision decord scikit-learn pandas tqdm numpy opencv-python gradio plotly imageio timm ultralytics
 ```
 
 ## Dataset Preparation
@@ -68,7 +95,6 @@ dataset/
 ├── train/
 │   ├── class_0/
 │   │   ├── video_001.mp4
-│   │   ├── video_002.mp4
 │   │   └── ...
 │   ├── class_1/
 │   │   └── ...
@@ -83,6 +109,7 @@ dataset/
 Supported formats: `.mp4`, `.avi`, `.mov`, `.mkv`
 
 Key dataset parameters:
+
 | Parameter | Default | Description |
 |---|---|---|
 | `frames_per_clip` | 16 | Frames sampled per clip |
@@ -90,61 +117,74 @@ Key dataset parameters:
 | `num_clips` | 1 | Number of clips per video |
 | `random_clip_sampling` | True/False | Random clip start (train) vs. center (val) |
 
-> **Note**: The training script applies undersampling to class_0 (capped at 10,000 samples by default) to handle class imbalance, and uses weighted cross-entropy loss.
+> **Note**: Both `train.py` and `train_new.py` apply class-0 undersampling to handle class imbalance (capped at 10,000 and 5,000 samples respectively), and use weighted loss functions.
 
 ## Checkpoint Preparation
 
-### Pretrained VJEPA2 Checkpoint
+### Pretrained Starting Point
 
-Download the VJEPA2 pretrained weights from the official source:
-
-- [VJEPA2 ViT-Giant checkpoint](https://dl.fbaipublicfiles.com/jepa/vjepa2/vit_giant.pth) or use your own pre-trained checkpoint.
-
-Place the checkpoint file (e.g., `checkpoint_epoch_20.pt`) in the project root or a path of your choice.
+Fine-tuning starts from `./ckpts/vjepa-nmode-pretrain.pt`. Alternative pretrained checkpoints are available under `ckpts/` (e.g., MAE-pretrained `vitg_mae_e1.pt`, VAE-pretrained `vitg_vae_e1.pt`, ViT-Large `vjepa-vitl.pt`). See the [Pretraining](#pretraining) section for how these are produced.
 
 ### Fine-tuned Checkpoints
 
-Fine-tuned checkpoints are saved under `ckpts/vjepa_full/` during training. The naming convention is `best_vjepa_model{accuracy}.pt`, e.g., `best_vjepa_model9720.pt` (97.20% val accuracy).
+Fine-tuned checkpoints are saved under `ckpts/vjepa_full/` (or variant directories like `vjepa_full_maee1`, `vjepa_full_newval`, etc.). Naming convention: `best_vjepa_model.pt` (best by validation accuracy).
+
+## Pretraining
+
+See `pretraining/README.md` for full details.
+
+- [x] **VideoMAE (MAE)** — VideoMAEv2-style masked autoencoder. Encoder: VJEPA ViT-g, Decoder: shallow Transformer (512-dim, 4 layers). Tube masking (90%) + running-cell masking (50%), per-patch normalized MSE loss. 300 epochs on 500K+ unlabeled ultrasound videos.
+- [x] **VideoVAEPlus (VAE)** — ViT encoder → 2+1D Conv decoder with temporal compression + 3D PatchGAN discriminator. Loss: L1 + LPIPS + KL + adversarial. 100 epochs on unlabeled ultrasound videos.
+- [x] **Checkpoint conversion** — `pretraining/convert_checkpoint.py` converts MAE/VAE checkpoints to `build_model()`-compatible format for downstream fine-tuning.
+
+### Quick Start
+
+```bash
+# MAE pretraining
+python pretraining/prepare_data.py --video_dirs /path/to/videos --output_dir pretraining/data
+torchrun --nproc_per_node=8 pretraining/run_pretrain_mae.py \
+    --data_root /path/to/dataset --data_path pretraining/data/us_videomae_train.txt \
+    --output_dir pretraining/output/mae_vitg --batch_size 16 --epochs 300
+python pretraining/convert_checkpoint.py --method videomae \
+    --input pretraining/output/mae_vitg/checkpoint-299.pth --output ./ckpts/vitg_mae.pt
+
+# VAE pretraining
+torchrun --nproc_per_node=8 pretraining/run_pretrain_vae.py \
+    --data_root /path/to/dataset --data_path pretraining/data/us_videomae_train.txt \
+    --output_dir pretraining/output/vae --batch_size 2 --epochs 100
+python pretraining/convert_checkpoint.py --method vae \
+    --input pretraining/output/vae/checkpoint-99.pth --output ./ckpts/vitg_vae.pt
+```
+
+### TODO
+
+- [ ] **BUVFM unified pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
+- [ ] **Knowledge distillation** — Distill the large ViT-Giant model to smaller architectures for efficient deployment.
 
 ## Training
 
-### Full Finetuning (encoder + classifier)
+All training starts from a pretrained VJEPA checkpoint (`--pretrained_ckpt` is required). The standard starting point is `./ckpts/vjepa-nmode-pretrain.pt`.
+
+### Fine-tuning (`train.py`)
+
+Uses weighted `CrossEntropyLoss` with class-0 undersampling (capped at 10,000 samples).
 
 ```bash
-# Stage 1: from pretrained VJEPA2 weights
-torchrun --nproc_per_node=2 train.py \
-    --pretrained_ckpt ./checkpoint_epoch_20.pt \
+torchrun --nproc_per_node=4 train.py \
+    --pretrained_ckpt ./ckpts/vjepa-nmode-pretrain.pt \
     --batch_size 16 \
     --lr 5e-5 \
-    --epochs 50
-
-# Stage 2: continue from best Stage 1 checkpoint
-torchrun --nproc_per_node=4 train.py \
-    --pretrained_ckpt ./ckpts/vjepa_full/best_vjepa_model9422.pt \
-    --batch_size 16 \
-    --lr 5e-5 \
-    --epochs 50
-
-# Stage 3: further finetune with lower learning rate
-torchrun --nproc_per_node=4 train.py \
-    --pretrained_ckpt ./ckpts/vjepa_full/best_vjepa_model9647.pt \
-    --batch_size 16 \
-    --lr 1e-5 \
-    --epochs 50
-
-# Stage 4: fine-grained finetuning
-torchrun --nproc_per_node=4 train.py \
-    --pretrained_ckpt ./ckpts/vjepa_full/best_vjepa_model9720.pt \
-    --batch_size 16 \
-    --lr 5e-6 \
     --epochs 50
 ```
 
-### Freeze Backbone (classifier only)
+
+### Freeze Backbone
+
+Train the classifier head only while keeping the encoder frozen:
 
 ```bash
 torchrun --nproc_per_node=4 train.py \
-    --pretrained_ckpt ./checkpoint_epoch_20.pt \
+    --pretrained_ckpt ./ckpts/vjepa-nmode-pretrain.pt \
     --batch_size 16 \
     --lr 5e-5 \
     --freeze_backbone
@@ -154,13 +194,17 @@ torchrun --nproc_per_node=4 train.py \
 
 | Argument | Default | Description |
 |---|---|---|
-| `--pretrained_ckpt` | (required) | Path to checkpoint file |
+| `--pretrained_ckpt` | (required) | Path to pretrained checkpoint |
 | `--batch_size` | 4 | Batch size per GPU |
 | `--lr` | 5e-5 | Learning rate |
 | `--epochs` | 50 | Number of training epochs |
 | `--num_frames` | 16 | Frames per clip |
+| `--model_name` | `vit_giant_xformers` | Backbone: `vit_giant_xformers`, `vit_large`, `vit_huge` |
 | `--freeze_backbone` | False | Freeze encoder, train classifier only |
-| `--com_exp` | False | Comparison experiment mode (saves to `logs_vjepa/com/`, checkpoints to `ckpts/vjepa_ori/`)
+| `--exp_name` | None | Experiment name suffix for log/ckpt directories |
+| `--train_dir` | `/home/lx/alg/videos_train` | Training data directory |
+| `--val_dir` | `/home/lx/alg/videos_val` | Validation data directory |
+
 
 ### Training Output
 
@@ -170,31 +214,43 @@ torchrun --nproc_per_node=4 train.py \
 
 ## Inference & Evaluation
 
-### Validation set evaluation (with labels)
+### Multi-GPU Distributed Inference (Primary)
+
+Use `inference_ddp.py` with `torchrun` for parallel inference across GPUs:
 
 ```bash
-# Normal inference
-python inference.py --checkpoint ./ckpts/vjepa_full/best_vjepa_model9720.pt --val_dir /path/to/val
+# Standard inference
+torchrun --nproc_per_node=4 inference_ddp.py \
+    --checkpoint ./ckpts/vjepa_full/best_vjepa_model9639\(paper\).pt \
+    --val_dir /path/to/val /path/to/test \
+    --output ./output/results.csv
 
-# Robust evaluation: run inference with speckle noise at multiple levels (0.05–0.95, step 0.05)
-python inference.py --checkpoint ./ckpts/vjepa_full/best_vjepa_model9720.pt --val_dir /path/to/val --restore_true
+# Robust evaluation with speckle noise
+torchrun --nproc_per_node=4 inference_ddp.py \
+    --checkpoint ./ckpts/vjepa_full/best_vjepa_model9639\(paper\).pt \
+    --val_dir /path/to/val \
+    --restore_true
 ```
 
 | Argument | Default | Description |
 |---|---|---|
-| `--checkpoint` | `./ckpts/vjepa_full/best_vjepa_model9720.pt` | Path to fine-tuned checkpoint |
-| `--val_dir` | `/home/lx/alg/videos_val` | One or more validation directories |
+| `--checkpoint` | (see code) | Path to fine-tuned checkpoint |
+| `--val_dir` | (required) | One or more validation directories |
+| `--output` | `./output/...` | Output CSV path |
+| `--model_name` | `vit_giant_xformers` | Backbone variant |
 | `--restore_true` | False | Run robust evaluation across speckle noise ratios (0.05–0.95) |
 
-Without `--restore_true`, saves results to `./output/inference_results.csv`. With `--restore_true`, saves to `./output/robust/inference_result_{ratio}.csv` for each noise level.
+Each rank writes a temp CSV; rank 0 merges and deduplicates. Supports resume (skips already-processed videos if the output CSV exists).
 
-Output includes per-video probabilities (`p0`, `p1`, `p2`), overall accuracy, and confusion matrix.
+### Single-GPU Inference
 
-### Speckle Noise Robustness (`RobustVideoTransform`)
+`inference.py` provides the same functionality on a single GPU:
 
-The `--restore_true` flag enables robustness evaluation by applying multiplicative Gaussian speckle noise to video frames. Each frame receives independent noise with a consistent ratio across frames. The `RobustVideoTransform` class lives in `utils.py` (mirrors `EvalVideoTransform` but adds per‑frame speckle noise). The underlying `apply_speckle_noise` function is in `src/datasets/utils/video/transforms.py`. Set `speckle_noise_ratio=0` in `make_transforms` (default) to use the standard `EvalVideoTransform` instead.
+```bash
+python inference.py --checkpoint ./ckpts/vjepa_full/best_vjepa_model9639\(paper\).pt --val_dir /path/to/val
+```
 
-### Inference on arbitrary video directory (no labels required)
+### Arbitrary Directory Inference (no labels required)
 
 ```bash
 python test.py
@@ -203,133 +259,126 @@ python test.py
 Edit the following variables in `test.py` before running:
 - `checkpoint_path` — path to the fine-tuned checkpoint
 - `input_dir` — path to directory containing videos (recursive scan)
-- `output_csv` — output CSV path (default: `./csvs/test_results.csv`)
+- `output_csv` — output CSV path
 
-Supports mixed precision inference and outputs per-video class probabilities.
+### Speckle Noise Robustness
 
-## Visualization
+The `--restore_true` flag enables robustness evaluation by applying multiplicative Gaussian speckle noise to video frames at ratios from 0.05 to 0.95. The `RobustVideoTransform` class is in `utils.py`; the underlying `apply_speckle_noise` function is in `src/datasets/utils/video/transforms.py`.
 
-### Grad-CAM Heatmap Visualization
+Without `--restore_true`, results are saved to the specified output CSV (or `./output/inference_results.csv` for `inference.py`). With `--restore_true`, results are saved per noise level to `./output/robust/inference_result_{ratio}.csv` (or `./output/0506internal/` for `inference_ddp.py`).
+
+## Data Pipeline
+
+The inference pipeline processes each video through the following steps:
+
+1. **Frame Sampling**
+   - Uses `decord.VideoReader` to decode video to numpy `[T, H, W, 3]`, uint8, RGB, channels-last.
+   - Samples 16 frames with `frame_step=2`, evenly from the video start (`np.linspace(0, 32, 16)` → frame indices `[0, 2, 4, ..., 30]`).
+   - If the video has fewer than 32 frames, the last frame is repeated to pad.
+
+2. **Resize (short side to 256)**
+   - Preserves aspect ratio, resizes the short side to 256 pixels.
+   - Uses `cv2.resize` with bilinear interpolation (`INTER_LINEAR`).
+   - `short_side = crop_size * 256 / 224 = 256`.
+
+3. **CenterCrop (224×224)**
+   - Center-crops a 224×224 square region.
+   - Output: numpy `[16, 224, 224, 3]`, uint8, RGB.
+
+4. **ClipToTensor (format conversion + normalize to [0, 1])**
+   - HWC → CHW transpose: `(16, 224, 224, 3)` → `(3, 16, 224, 224)`.
+   - Divides by 255: uint8 [0, 255] → float32 [0.0, 1.0].
+   - Preserves RGB channel order throughout.
+
+5. **Normalize (ImageNet statistics)**
+   - Channel-wise: `mean = (0.485, 0.456, 0.406)`, `std = (0.229, 0.224, 0.225)`.
+   - Output range: ~[-2.1, 2.6], float32.
+
+6. **Packaging & Batching**
+   - Each transformed clip is wrapped as `[[tensor(3, 16, 224, 224)]]` (outer list = clips, inner list = views; both are 1 during inference).
+   - `DataLoader` stacks to batch: `[B, 3, 16, 224, 224]`.
+
+7. **Model Input**
+   - `PatchEmbed3D`: `Conv3d(3 → 1408, kernel=(2,16,16), stride=(2,16,16))`.
+   - Output: `[B, 8, 14, 14]` tokens (8 temporal × 14 height × 14 width = 1568 tokens).
+   - ViT + AttentiveClassifier → 3-class logits → Softmax.
+
+## QC Screening (Stage 1)
+
+The `QC/` directory contains standalone tools for rapid ultrasound video screening using MobileNetV3 + YOLO.
+
+### QC/stage1.py — Single-Video Screener
+
+A frame-level screener: MobileNetV3 classifies each frame (lesion vs. no-lesion), and YOLO detects bounding boxes on suspected lesion frames.
 
 ```bash
-python vis.py
+python QC/stage1.py /path/to/video.mp4
+python QC/stage1.py /path/to/video/directory   # recursive scan
+python QC/stage1.py /path/to/video.mp4 --batch-size 32
 ```
 
-This generates Grad-CAM heatmaps overlaid on video frames to interpret which spatiotemporal regions the model attends to for classification. Edit the following parameters in `visualize_gradcam()` before running:
+Outputs per-frame JSON results and an annotated video to `./output/`.
 
-| Parameter | Default | Description |
-|---|---|---|
-| `video_path` | `./assets/CLASS1_0.mp4` | Input video path |
-| `checkpoint_path` | `./ckpts/vjepa_full/best_vjepa_model9720.pt` | Model checkpoint |
-| `output_dir` | `./output` | Output directory |
-| `target_class` | None | Grad-CAM target class (None = use predicted class) |
-| `alpha` | 0.5 | Heatmap overlay transparency |
+### QC/quality_con_clip_save_ed5.py — Batch Clip Extraction
 
-Output files (under `output_dir`):
-- `{video_name}_gradcam.mp4` — heatmap overlay video
-- `{video_name}_gradcam_compare.mp4` — side-by-side comparison (original | Grad-CAM)
-- `{video_name}_gradcam_summary.png` — summary image with top row: original frames, bottom row: heatmaps
+Multi-GPU batch processing pipeline: screens videos frame-by-frame with MobileNetV3 + YOLO, extracts lesion candidate clips where lesions are detected over consecutive frames. Saves 6 clips per video.
 
-## Video Conversion
-
-Source videos encoded with mpeg4 or other codecs may not play in browsers (e.g., Gradio's `gr.Video` component). Use the conversion script to transcode them to H.264:
+Configure input/output paths at the top of the script, then run:
 
 ```bash
-python convert_video.py input.mp4 output.mp4
-python convert_video.py input.mp4 output.mp4 --fps 8   # specify output FPS
+python QC/quality_con_clip_save_ed5.py
 ```
 
-This uses `imageio` with the `libx264` encoder to produce browser-compatible mp4 files. The `--fps` flag is optional; if omitted, the source FPS is preserved.
+### QC Models
 
-## 3-Stage Pipeline Demo (Gradio)
+| File | Description |
+|---|---|
+| `QC/mobilenetv3_small_075_yl_241222(3).pth` | MobileNetV3-Small 0.75x (2-class: lesion vs. no-lesion) |
+| `QC/best_640_s_60e(2).pt` | YOLO object detector (bounding box localization) |
 
-A web-based interactive demo implementing a cascaded 3-stage inference pipeline for medical ultrasound video classification:
+## 2-Stage Pipeline Demo (Gradio)
+
+A web-based interactive demo implementing a cascaded 2-stage inference pipeline:
 
 ```
-Video Input → [Stage 1: Rapid Filter] → [Stage 2: Refinement] → [Stage 3: VJEPA2 Classify]
-                    │                           │                           │
-              No lesions?                  No lesions?               3-class probs
-               → STOP                      → STOP                 + Grad-CAM heatmap
+Video Input → [Stage 1: Screening] → [Stage 2: Risk Grading]
+                    │                         │
+          MobileNetV3 + YOLO           VJEPA2 ViT-Giant
+          No lesions? → STOP           3-class probs + Grad-CAM
 ```
 
-### Stage 1 — Rapid Negative Filtering
+### Stage 1 — Rapid Screening
 
-Lightweight classifier (MobileNet) quickly rejects clearly negative videos. Only videos classified as containing lesions proceed to a lightweight detector (YOLO) for bounding box localization. If no boxes are found, the pipeline stops.
+Lightweight models quickly screen for lesions in each video frame:
+- **MobileNetV3-Small**: Frame-level lesion vs. no-lesion classification. Frames with low lesion probability trigger YOLO.
+- **YOLO**: Bounding box detection and localization on suspected lesion frames.
+- Pipeline stops if no lesions are detected, avoiding unnecessary heavy computation.
 
-- **Classifier**: MobileNet-V3 (placeholder — random 70% positive rate)
-- **Detector**: YOLOv8-nano (placeholder — random 80% box-found rate)
+### Stage 2 — VJEPA2 Risk Grading
 
-### Stage 2 — Medium-weight Refinement
-
-nmODE-ResNet provides a second filter to further reduce false positives before expensive VJEPA2 inference.
-
-- **Model**: nmODE-ResNet18 (placeholder — random 80% positive rate)
-
-### Stage 3 — VJEPA2 Classification
-
-Full VJEPA2 ViT-Giant model performs 3-class risk classification (low / medium / high) with Grad-CAM visualization for interpretability.
-
-- **Model**: VJEPA2 ViT-Giant (real, fine-tuned)
-- **Output**: 3-class probability bar chart + Grad-CAM heatmap video + summary image
+Full VJEPA2 ViT-Giant performs 3-class risk classification with Grad-CAM visualization for interpretability:
+- **Model**: VJEPA2 ViT-Giant with AttentiveClassifier
+- **Output**: 3-class probability bar chart + Grad-CAM comparison video
 
 ### Running the Demo
 
 ```bash
-pip install gradio plotly
+pip install gradio plotly timm ultralytics
 python app.py
 ```
 
-Open http://localhost:9530 in your browser. Upload a video or click an example to run the pipeline. The flowchart at the top updates dynamically as each stage completes.
+Open http://localhost:9530 in your browser. Upload a video or click an example (16 videos across 4 categories: Class 0 / Class NO / Class 1 / Class 2). The model is loaded on the first pipeline run.
 
-> **Note**: Stage 1 and 2 currently use placeholder models (random outputs) for demonstration. Replace the `classify()` / `detect_boxes()` methods in `pipeline_utils.py` with real model inference when available.
+Pipeline logic and model interfaces (MobileNetV3, YOLO, VJEPA2, Grad-CAM) are in `pipeline_utils.py`.
 
 ## Results
 
 | Checkpoint | Val Accuracy |
 |---|---|
-| best_vjepa_model9422.pt | 94.22% |
-| best_vjepa_model9526.pt | 95.26% |
-| best_vjepa_model9639.pt | 96.39% |
-| best_vjepa_model9647.pt | 96.47% |
-| best_vjepa_model9663.pt | 96.63% |
-| best_vjepa_model9720.pt | 97.20% |
+| best_vjepa_model9639(paper).pt.pt | 96.39% |
+
+Results from `train.py` training path (weighted CrossEntropyLoss).
 
 ## License
 
-This project is based on [VJEPA](https://github.com/facebookresearch/jepa) by Meta Platforms, Inc., licensed under the MIT License.
-
-
-##    整个推理 pipeline 对视频做了以下处理，按顺序执行：                                                                                                                                                                                                                                                                                                                                  
-  1. 视频帧采样
-  - 使用 decord.VideoReader 读取视频，输出 numpy[T, H, W, 3]，uint8，RGB，channels-last                                                                                                                     
-  - 固定取 16 帧，步长 frame_step=2，从视频开头均匀采样（np.linspace(0, 32, 16) → 帧索引 [0, 2, 4, ..., 30]）
-  - 如果视频不足 32 帧，末尾帧会补齐                                                                                                                                                                        
-                                                                                                                                                                                                            
-  2. Resize（短边缩放至 256）
-  - 保持宽高比，将短边缩放到 256 像素                                                                                                                                                                       
-  - 使用 cv2.resize + 双线性插值 (INTER_LINEAR)         
-  - 短边 = crop_size * 256 / 224 = 224 * 256 / 224 = 256                                                                                                                                                    
-                                                                                                                                                                                                            
-  3. CenterCrop（中心裁剪 224×224）                                                                                                                      
-  - 从中心区域裁剪出 224×224 的正方形                                                                                                                                                                       
-  - 输出 numpy[16, 224, 224, 3]，uint8，RGB             
-                                                                                                                                                                                                            
-  4. ClipToTensor（格式转换 + 归一化到 [0,1]） 
-  - HWC → CHW 转置：(16, 224, 224, 3) → (3, 16, 224, 224)                                                                                                                                                   
-  - 除以 255：uint8 [0,255] → float32 [0.0, 1.0]        
-  - 无 BGR↔RGB 转换，全程保持 RGB 通道顺序                                                                                                                                                                  
-                                                                                                                                                                                 
-  5. Normalize（ImageNet 标准化）
-  - 逐通道减均值除标准差：  
-  - mean = (0.485, 0.456, 0.406)
-  - std = (0.229, 0.224, 0.225)                                                                                                                                                                           
-  - 输出范围约 [-2.1, 2.6]，float32                                                                                                                                                                         
-                                                                                                                                                                                                            
-  6. 打包 & 批处理
-  - 变换后包装为 [[tensor(3, 16, 224, 224)]]（外层是 clip 列表，内层是 view 列表，推理时各为 1）                                                                                                            
-  - DataLoader 批次堆叠 → [B=16, 3, 16, 224, 224]       
-                                                                                                                                                                                                            
-  7. 输入模型   
-  - PatchEmbed3D：Conv3d(3→1408, kernel=(2,16,16), stride=(2,16,16))                                                                                                                                        
-  - 输出 [B, 8, 14, 14] 个 token（8 时间 × 14 高 × 14 宽 = 1568 tokens）
-  - ViT + AttentiveClassifier → 3 类 logits → Softmax                                                                                                                                                        
+Licensed under the MIT License.
