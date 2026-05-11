@@ -2,41 +2,22 @@
 
 Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embedding Predictive Architecture) ViT-Giant for medical ultrasound video classification, with a cascaded screening pipeline (MobileNetV3 + YOLO → VJEPA2). Supports multi-GPU distributed training and inference with mixed precision.
 
-## Hugging Face Space
+## Table of Contents
 
-The Gradio demo in this repository is deployed at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
-
-### Space entrypoint
-
-- App entry: `app.py`
-- Dependencies: `requirements.txt`
-- Demo assets: `assets/`
-- Model weights used by the demo:
-  - `ckpts/vjepa_full/best_vjepa_model9639(paper).pt`
-  - `QC/best_640_s_60e(2).pt`
-  - `QC/mobilenetv3_small_075_yl_241222(3).pth`
-
-### Notes for the first Space version
-
-- This first deployment targets a **CPU Space**.
-- The app should start normally, but the first inference can be slow because the VJEPA2 checkpoint is large.
-- The model is loaded lazily on the first pipeline run.
-- If build time or repo size becomes a problem, the next step is to move weights to the Hugging Face Hub and download them at startup.
-
-### Local run
-
-```bash
-pip install -r requirements.txt
-python app.py
-```
-
-Optional environment variables:
-
-```bash
-export BUVFM_CHECKPOINT_PATH=/absolute/path/to/checkpoint.pt
-export BUVFM_ASSETS_DIR=/absolute/path/to/assets
-export BUVFM_MAX_FILE_SIZE_MB=100
-```
+- [Model Architecture](#model-architecture)
+- [Project Structure](#project-structure)
+- [Dependencies](#dependencies)
+- [Dataset Preparation](#dataset-preparation)
+- [Checkpoint Preparation](#checkpoint-preparation)
+- [Pretraining](#pretraining)
+- [Training](#training)
+- [Inference & Evaluation](#inference--evaluation)
+- [Data Pipeline](#data-pipeline)
+- [QC Screening (Stage 1)](#qc-screening-stage-1)
+- [2-Stage Pipeline Demo (Gradio)](#2-stage-pipeline-demo-gradio)
+- [Hugging Face Space](#hugging-face-space)
+- [Results](#results)
+- [License](#license)
 
 ## Model Architecture
 
@@ -406,6 +387,42 @@ python app.py
 Open http://localhost:9530 in your browser, or visit the online demo at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/). Upload a video or click an example (16 videos across 4 categories: Class 0 / Class NO / Class 1 / Class 2). The model is loaded on the first pipeline run.
 
 Pipeline logic and model interfaces (MobileNetV3, YOLO, VJEPA2, Grad-CAM) are in `pipeline_utils.py`.
+
+## Hugging Face Space
+
+The Gradio demo in this repository is deployed at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
+
+### Space entrypoint
+
+- App entry: `app.py`
+- Dependencies: `requirements.txt`
+- Demo assets: `assets/`
+- Model weights used by the demo:
+  - `ckpts/vjepa_full/best_vjepa_model9639(paper).pt`
+  - `QC/best_640_s_60e(2).pt`
+  - `QC/mobilenetv3_small_075_yl_241222(3).pth`
+
+### Notes for the first Space version
+
+- This first deployment targets a **CPU Space**.
+- The app should start normally, but the first inference can be slow because the VJEPA2 checkpoint is large.
+- The model is loaded lazily on the first pipeline run.
+- If build time or repo size becomes a problem, the next step is to move weights to the Hugging Face Hub and download them at startup.
+
+### Local run
+
+```bash
+pip install -r requirements.txt
+python app.py
+```
+
+Optional environment variables:
+
+```bash
+export BUVFM_CHECKPOINT_PATH=/absolute/path/to/checkpoint.pt
+export BUVFM_ASSETS_DIR=/absolute/path/to/assets
+export BUVFM_MAX_FILE_SIZE_MB=100
+```
 
 ## Results
 
