@@ -31,7 +31,8 @@ Thumbs.db
 !assets/*.mp4
 tsne/
 logs_vjepa/
-ckpts/
+ckpts/*
+
 csvs/
 cluster_videos.py
 output/
