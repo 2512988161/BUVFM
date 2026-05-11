@@ -9,13 +9,11 @@ Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embe
 - [Dependencies](#dependencies)
 - [Dataset Preparation](#dataset-preparation)
 - [Checkpoint Preparation](#checkpoint-preparation)
+- [Data Pipeline](#data-pipeline)
 - [Pretraining](#pretraining)
 - [Training](#training)
 - [Inference & Evaluation](#inference--evaluation)
-- [Data Pipeline](#data-pipeline)
-- [QC Screening (Stage 1)](#qc-screening-stage-1)
-- [2-Stage Pipeline Demo (Gradio)](#2-stage-pipeline-demo-gradio)
-- [Hugging Face Space](#hugging-face-space)
+- [Demo Applications](#demo-applications)
 - [Results](#results)
 - [License](#license)
 
@@ -145,6 +143,75 @@ Fine-tuning starts from `./ckpts/vjepa-nmode-pretrain.pt`. Alternative pretraine
 ### Fine-tuned Checkpoints
 
 Fine-tuned checkpoints are saved under `ckpts/vjepa_full/` (or variant directories like `vjepa_full_maee1`, `vjepa_full_newval`, etc.). Naming convention: `best_vjepa_model.pt` (best by validation accuracy).
+
+## Data Pipeline
+
+The inference pipeline processes each video through the following steps:
+
+1. **Frame Sampling**
+   - Uses `decord.VideoReader` to decode video to numpy `[T, H, W, 3]`, uint8, RGB, channels-last.
+   - Samples 16 frames with `frame_step=2`, evenly from the video start (`np.linspace(0, 32, 16)` → frame indices `[0, 2, 4, ..., 30]`).
+   - If the video has fewer than 32 frames, the last frame is repeated to pad.
+
+2. **Resize (short side to 256)**
+   - Preserves aspect ratio, resizes the short side to 256 pixels.
+   - Uses `cv2.resize` with bilinear interpolation (`INTER_LINEAR`).
+   - `short_side = crop_size * 256 / 224 = 256`.
+
+3. **CenterCrop (224×224)**
+   - Center-crops a 224×224 square region.
+   - Output: numpy `[16, 224, 224, 3]`, uint8, RGB.
+
+4. **ClipToTensor (format conversion + normalize to [0, 1])**
+   - HWC → CHW transpose: `(16, 224, 224, 3)` → `(3, 16, 224, 224)`.
+   - Divides by 255: uint8 [0, 255] → float32 [0.0, 1.0].
+   - Preserves RGB channel order throughout.
+
+5. **Normalize (ImageNet statistics)**
+   - Channel-wise: `mean = (0.485, 0.456, 0.406)`, `std = (0.229, 0.224, 0.225)`.
+   - Output range: ~[-2.1, 2.6], float32.
+
+6. **Packaging & Batching**
+   - Each transformed clip is wrapped as `[[tensor(3, 16, 224, 224)]]` (outer list = clips, inner list = views; both are 1 during inference).
+   - `DataLoader` stacks to batch: `[B, 3, 16, 224, 224]`.
+
+7. **Model Input**
+   - `PatchEmbed3D`: `Conv3d(3 → 1408, kernel=(2,16,16), stride=(2,16,16))`.
+   - Output: `[B, 8, 14, 14]` tokens (8 temporal × 14 height × 14 width = 1568 tokens).
+   - ViT + AttentiveClassifier → 3-class logits → Softmax.
+
+### QC Screening (Stage 1)
+
+The `QC/` directory contains standalone tools for rapid ultrasound video screening using MobileNetV3 + YOLO.
+
+#### QC/stage1.py — Single-Video Screener
+
+A frame-level screener: MobileNetV3 classifies each frame (lesion vs. no-lesion), and YOLO detects bounding boxes on suspected lesion frames.
+
+```bash
+python QC/stage1.py /path/to/video.mp4
+python QC/stage1.py /path/to/video/directory   # recursive scan
+python QC/stage1.py /path/to/video.mp4 --batch-size 32
+```
+
+Outputs per-frame JSON results and an annotated video to `./output/`.
+
+#### QC/quality_con_clip_save_ed5.py — Batch Clip Extraction
+
+Multi-GPU batch processing pipeline: screens videos frame-by-frame with MobileNetV3 + YOLO, extracts lesion candidate clips where lesions are detected over consecutive frames. Saves 6 clips per video.
+
+Configure input/output paths at the top of the script, then run:
+
+```bash
+python QC/quality_con_clip_save_ed5.py
+```
+
+#### QC Models
+
+| File | Description |
+|---|---|
+| `QC/mobilenetv3_small_075_yl_241222(3).pth` | MobileNetV3-Small 0.75x (2-class: lesion vs. no-lesion) |
+| `QC/best_640_s_60e(2).pt` | YOLO object detector (bounding box localization) |
 
 ## Pretraining
 
@@ -284,76 +351,9 @@ The `--restore_true` flag enables robustness evaluation by applying multiplicati
 
 Without `--restore_true`, results are saved to the specified output CSV (or `./output/inference_results.csv` for `inference.py`). With `--restore_true`, results are saved per noise level to `./output/robust/inference_result_{ratio}.csv` (or `./output/0506internal/` for `inference_ddp.py`).
 
-## Data Pipeline
+## Demo Applications
 
-The inference pipeline processes each video through the following steps:
-
-1. **Frame Sampling**
-   - Uses `decord.VideoReader` to decode video to numpy `[T, H, W, 3]`, uint8, RGB, channels-last.
-   - Samples 16 frames with `frame_step=2`, evenly from the video start (`np.linspace(0, 32, 16)` → frame indices `[0, 2, 4, ..., 30]`).
-   - If the video has fewer than 32 frames, the last frame is repeated to pad.
-
-2. **Resize (short side to 256)**
-   - Preserves aspect ratio, resizes the short side to 256 pixels.
-   - Uses `cv2.resize` with bilinear interpolation (`INTER_LINEAR`).
-   - `short_side = crop_size * 256 / 224 = 256`.
-
-3. **CenterCrop (224×224)**
-   - Center-crops a 224×224 square region.
-   - Output: numpy `[16, 224, 224, 3]`, uint8, RGB.
-
-4. **ClipToTensor (format conversion + normalize to [0, 1])**
-   - HWC → CHW transpose: `(16, 224, 224, 3)` → `(3, 16, 224, 224)`.
-   - Divides by 255: uint8 [0, 255] → float32 [0.0, 1.0].
-   - Preserves RGB channel order throughout.
-
-5. **Normalize (ImageNet statistics)**
-   - Channel-wise: `mean = (0.485, 0.456, 0.406)`, `std = (0.229, 0.224, 0.225)`.
-   - Output range: ~[-2.1, 2.6], float32.
-
-6. **Packaging & Batching**
-   - Each transformed clip is wrapped as `[[tensor(3, 16, 224, 224)]]` (outer list = clips, inner list = views; both are 1 during inference).
-   - `DataLoader` stacks to batch: `[B, 3, 16, 224, 224]`.
-
-7. **Model Input**
-   - `PatchEmbed3D`: `Conv3d(3 → 1408, kernel=(2,16,16), stride=(2,16,16))`.
-   - Output: `[B, 8, 14, 14]` tokens (8 temporal × 14 height × 14 width = 1568 tokens).
-   - ViT + AttentiveClassifier → 3-class logits → Softmax.
-
-## QC Screening (Stage 1)
-
-The `QC/` directory contains standalone tools for rapid ultrasound video screening using MobileNetV3 + YOLO.
-
-### QC/stage1.py — Single-Video Screener
-
-A frame-level screener: MobileNetV3 classifies each frame (lesion vs. no-lesion), and YOLO detects bounding boxes on suspected lesion frames.
-
-```bash
-python QC/stage1.py /path/to/video.mp4
-python QC/stage1.py /path/to/video/directory   # recursive scan
-python QC/stage1.py /path/to/video.mp4 --batch-size 32
-```
-
-Outputs per-frame JSON results and an annotated video to `./output/`.
-
-### QC/quality_con_clip_save_ed5.py — Batch Clip Extraction
-
-Multi-GPU batch processing pipeline: screens videos frame-by-frame with MobileNetV3 + YOLO, extracts lesion candidate clips where lesions are detected over consecutive frames. Saves 6 clips per video.
-
-Configure input/output paths at the top of the script, then run:
-
-```bash
-python QC/quality_con_clip_save_ed5.py
-```
-
-### QC Models
-
-| File | Description |
-|---|---|
-| `QC/mobilenetv3_small_075_yl_241222(3).pth` | MobileNetV3-Small 0.75x (2-class: lesion vs. no-lesion) |
-| `QC/best_640_s_60e(2).pt` | YOLO object detector (bounding box localization) |
-
-## 2-Stage Pipeline Demo (Gradio)
+### 2-Stage Pipeline Demo (Gradio)
 
 A web-based interactive demo implementing a cascaded 2-stage inference pipeline:
 
@@ -364,20 +364,20 @@ Video Input → [Stage 1: Screening] → [Stage 2: Risk Grading]
           No lesions? → STOP           3-class probs + Grad-CAM
 ```
 
-### Stage 1 — Rapid Screening
+#### Stage 1 — Rapid Screening
 
 Lightweight models quickly screen for lesions in each video frame:
 - **MobileNetV3-Small**: Frame-level lesion vs. no-lesion classification. Frames with low lesion probability trigger YOLO.
 - **YOLO**: Bounding box detection and localization on suspected lesion frames.
 - Pipeline stops if no lesions are detected, avoiding unnecessary heavy computation.
 
-### Stage 2 — VJEPA2 Risk Grading
+#### Stage 2 — VJEPA2 Risk Grading
 
 Full VJEPA2 ViT-Giant performs 3-class risk classification with Grad-CAM visualization for interpretability:
 - **Model**: VJEPA2 ViT-Giant with AttentiveClassifier
 - **Output**: 3-class probability bar chart + Grad-CAM comparison video
 
-### Running the Demo
+#### Running the Demo
 
 ```bash
 pip install gradio plotly timm ultralytics
@@ -388,11 +388,11 @@ Open http://localhost:9530 in your browser, or visit the online demo at [http://
 
 Pipeline logic and model interfaces (MobileNetV3, YOLO, VJEPA2, Grad-CAM) are in `pipeline_utils.py`.
 
-## Hugging Face Space
+### Hugging Face Space
 
 The Gradio demo in this repository is deployed at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
 
-### Space entrypoint
+#### Space entrypoint
 
 - App entry: `app.py`
 - Dependencies: `requirements.txt`
@@ -402,14 +402,14 @@ The Gradio demo in this repository is deployed at [http://buvfm.machineilab.org/
   - `QC/best_640_s_60e(2).pt`
   - `QC/mobilenetv3_small_075_yl_241222(3).pth`
 
-### Notes for the first Space version
+#### Notes for the first Space version
 
 - This first deployment targets a **CPU Space**.
 - The app should start normally, but the first inference can be slow because the VJEPA2 checkpoint is large.
 - The model is loaded lazily on the first pipeline run.
 - If build time or repo size becomes a problem, the next step is to move weights to the Hugging Face Hub and download them at startup.
 
-### Local run
+#### Local run
 
 ```bash
 pip install -r requirements.txt
