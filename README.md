@@ -4,7 +4,7 @@ Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embe
 
 ## Hugging Face Space
 
-The Gradio demo in this repository is prepared for deployment to the Hugging Face Space `xenosscu/BUVFM`.
+The Gradio demo in this repository is deployed at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
 
 ### Space entrypoint
 
@@ -403,7 +403,7 @@ pip install gradio plotly timm ultralytics
 python app.py
 ```
 
-Open http://localhost:9530 in your browser. Upload a video or click an example (16 videos across 4 categories: Class 0 / Class NO / Class 1 / Class 2). The model is loaded on the first pipeline run.
+Open http://localhost:9530 in your browser, or visit the online demo at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/). Upload a video or click an example (16 videos across 4 categories: Class 0 / Class NO / Class 1 / Class 2). The model is loaded on the first pipeline run.
 
 Pipeline logic and model interfaces (MobileNetV3, YOLO, VJEPA2, Grad-CAM) are in `pipeline_utils.py`.
 

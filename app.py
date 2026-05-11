@@ -387,6 +387,9 @@ video { max-width: 100%; max-height: 420px; object-fit: contain; }
     color: #dc2626;
     border-color: #fca5a5;
 }
+footer {
+    display: none !important;
+}
 """
 
 with gr.Blocks(
@@ -478,4 +481,4 @@ with gr.Blocks(
     )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", share=False, max_file_size=f"{MAX_FILE_SIZE_MB}mb")
+    demo.launch(server_name="0.0.0.0", server_port=9530, share=False, show_api=False, max_file_size=f"{MAX_FILE_SIZE_MB}mb")
