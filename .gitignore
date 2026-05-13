@@ -35,6 +35,8 @@ ckpts/*
 
 csvs/
 cluster_videos.py
+run_inference_grid.sh
+run_optm_sweep.sh
 output/
 pretrain/
 utility/

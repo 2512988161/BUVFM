@@ -6,16 +6,15 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score, confusion_matrix
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 
 from buildmodel import build_model
 from mydataset import InferenceVideoDataset
 from utils import make_transforms
-import warnings
-warnings.filterwarnings("ignore")
 
-def make_eval_dataloader(root_path, batch_size, exclude_names=None, **kwargs):
+
+def make_eval_dataloader(root_path, batch_size, **kwargs):
     """构建专门用于推理的 DataLoader（DDP 版本）"""
     transform = make_transforms(
         training=False,
@@ -33,11 +32,6 @@ def make_eval_dataloader(root_path, batch_size, exclude_names=None, **kwargs):
         shared_transform=None,
         random_clip_sampling=False,
     )
-
-    if exclude_names and len(exclude_names) > 0:
-        keep_indices = [i for i, s in enumerate(dataset.samples)
-                        if os.path.basename(s) not in exclude_names]
-        dataset = Subset(dataset, keep_indices)
 
     sampler = DistributedSampler(
         dataset,
@@ -65,39 +59,6 @@ def infer(checkpoint_path, val_dir, output_csv, args, device):
     rank = dist.get_rank()
     world_size = dist.get_world_size()
 
-    # --- 读取已处理视频（支持断点续跑） ---
-    completed_videos = set()
-    if rank == 0:
-        # 主输出 CSV
-        if os.path.exists(output_csv):
-            try:
-                existing = pd.read_csv(output_csv)
-                completed_videos.update(existing['video_name'].tolist())
-            except Exception:
-                pass
-        # 各 rank 的临时 CSV（上次崩溃未合并的）
-        for r in range(world_size):
-            tmp_csv = output_csv.replace('.csv', f'_tmp_rank{r}.csv')
-            if os.path.exists(tmp_csv):
-                try:
-                    tmp_df = pd.read_csv(tmp_csv)
-                    completed_videos.update(tmp_df['video_name'].tolist())
-                except Exception:
-                    pass
-        if completed_videos:
-            print(f"=> 发现 {len(completed_videos)} 个已处理视频，将跳过")
-
-    # 广播已处理集合到所有卡
-    obj_list = [list(completed_videos)]
-    dist.broadcast_object_list(obj_list, src=0)
-    completed_videos = set(obj_list[0])
-
-    # --- 加载数据（自动跳过已完成视频） ---
-    val_loader = make_eval_dataloader(val_dir, exclude_names=completed_videos, **args)
-    if rank == 0:
-        print(f"=> 准备推理，剩余 {len(val_loader.dataset)} 个视频待处理，"
-              f"每卡 {len(val_loader)} 个 Batch。")
-
     # --- 加载模型 ---
     if rank == 0:
         print("=> 正在加载模型...")
@@ -116,13 +77,18 @@ def infer(checkpoint_path, val_dir, output_csv, args, device):
     model.eval()
     classifier.eval()
 
-    # --- 临时 CSV 路径（本卡增量写入） ---
-    tmp_csv = output_csv.replace('.csv', f'_tmp_rank{rank}.csv')
+    # --- 加载数据 ---
+    val_loader = make_eval_dataloader(val_dir, **args)
+    if rank == 0:
+        print(f"=> 准备推理，共 {len(val_loader.dataset)} 个视频，{len(val_loader)} 个 Batch（每卡）。")
 
     # --- 推理循环 ---
+    all_probs = []
+    all_labels = []
+    all_paths = []
 
     with torch.no_grad():
-        loader = tqdm(val_loader, desc=f"Inference [Rank {rank}]") if rank == 0 else val_loader
+        loader = tqdm(val_loader, desc=f"Inference Progress [Rank {rank}]") if rank == 0 else val_loader
         for i, data in enumerate(loader):
             clips, labels, clip_indices, paths = data
             labels = labels.to(device)
@@ -134,88 +100,78 @@ def infer(checkpoint_path, val_dir, output_csv, args, device):
                 logits_list = [classifier(f) for f in features]
                 probs = sum([F.softmax(l, dim=1) for l in logits_list]) / len(logits_list)
 
-            probs_cpu = probs.cpu()
-            labels_cpu = labels.cpu()
+            all_probs.append(probs.cpu())
+            all_labels.append(labels.cpu())
+            all_paths.extend(paths)
 
-            # 即时写入本卡临时 CSV（每个 batch 追加）
-            rows = []
-            for j, p in enumerate(paths):
-                video_name = os.path.basename(p)
-                rows.append({
-                    'video_name': video_name,
-                    'label': labels_cpu[j].item(),
-                    'p0': probs_cpu[j][0].item(),
-                    'p1': probs_cpu[j][1].item(),
-                    'p2': probs_cpu[j][2].item()
-                })
-            batch_df = pd.DataFrame(rows)
-            batch_df.to_csv(tmp_csv, mode='a',
-                            header=(i == 0), index=False)
+    # --- 收集本卡结果 ---
+    local_probs = torch.cat(all_probs, dim=0)   # [N_local, 3]
+    local_labels = torch.cat(all_labels, dim=0)  # [N_local]
+    local_size = torch.tensor([local_probs.shape[0]], device=device, dtype=torch.long)
 
-    # --- barrier 保证所有卡都写完 ---
-    dist.barrier()
+    # 收集所有卡的数据量
+    sizes = [torch.zeros(1, dtype=torch.long, device=device) for _ in range(world_size)]
+    dist.all_gather(sizes, local_size)
 
-    # --- rank 0 合并所有临时 CSV ---
+    # 收集 probs 和 labels（先 padding 到最大 size）
+    max_size = max(s.item() for s in sizes)
+    pad_probs = torch.zeros(max_size, 3, device=device)
+    pad_labels = torch.zeros(max_size, dtype=torch.long, device=device)
+    pad_probs[:local_probs.shape[0]] = local_probs.to(device)
+    pad_labels[:local_labels.shape[0]] = local_labels.to(device)
+
+    gathered_probs = [torch.zeros(max_size, 3, device=device) for _ in range(world_size)]
+    gathered_labels = [torch.zeros(max_size, dtype=torch.long, device=device) for _ in range(world_size)]
+    dist.all_gather(gathered_probs, pad_probs)
+    dist.all_gather(gathered_labels, pad_labels)
+
+    # Move back to CPU for post-processing
+    gathered_probs = [p.cpu() for p in gathered_probs]
+    gathered_labels = [l.cpu() for l in gathered_labels]
+
+    # 收集 paths（字符串列表）
+    gathered_paths = [None for _ in range(world_size)]
+    dist.all_gather_object(gathered_paths, all_paths)
+
+    # --- 只在 rank 0 整理并保存结果 ---
     if rank == 0:
-        _merge_temp_csvs(output_csv, world_size)
-        _print_metrics(output_csv)
+        results = []
+        for r in range(world_size):
+            n = sizes[r].item()
+            probs_r = gathered_probs[r][:n]
+            labels_r = gathered_labels[r][:n]
+            paths_r = gathered_paths[r]
 
+            for j in range(n):
+                video_name = os.path.basename(paths_r[j])
+                results.append({
+                    'video_name': video_name,
+                    'label': labels_r[j].item(),
+                    'p0': probs_r[j][0].item(),
+                    'p1': probs_r[j][1].item(),
+                    'p2': probs_r[j][2].item()
+                })
 
-def _merge_temp_csvs(output_csv, world_size):
-    """合并所有 rank 的临时 CSV + 已有主 CSV 到最终输出"""
-    dfs = []
+        df = pd.DataFrame(results)
+        df.to_csv(output_csv, index=False)
+        print(f"\n=> 结果已保存至: {output_csv}")
 
-    # 已有主 CSV（断面续跑时保留的）
-    if os.path.exists(output_csv):
-        try:
-            dfs.append(pd.read_csv(output_csv))
-        except Exception:
-            pass
+        y_true = df['label'].values
+        y_pred = df[['p0', 'p1', 'p2']].values.argmax(axis=1)
 
-    for r in range(world_size):
-        tmp_csv = output_csv.replace('.csv', f'_tmp_rank{r}.csv')
-        if os.path.exists(tmp_csv):
-            try:
-                dfs.append(pd.read_csv(tmp_csv))
-            except Exception:
-                pass
+        acc = accuracy_score(y_true, y_pred)
+        cm = confusion_matrix(y_true, y_pred)
 
-    if not dfs:
-        print("=> 没有新结果需要合并。")
-        return
+        print("\n" + "=" * 40)
+        print(f"OVERALL ACCURACY: {acc * 100:.2f}%")
+        print("=" * 40)
 
-    df = pd.concat(dfs, ignore_index=True)
-    # 按 video_name 去重，保留最后出现的（即最新的临时 CSV 结果）
-    df = df.drop_duplicates(subset='video_name', keep='last')
-    df.to_csv(output_csv, index=False)
-    print(f"\n=> 结果已保存至: {output_csv}，共 {len(df)} 条")
-
-    # 清理临时 CSV
-    for r in range(world_size):
-        tmp_csv = output_csv.replace('.csv', f'_tmp_rank{r}.csv')
-        if os.path.exists(tmp_csv):
-            os.remove(tmp_csv)
-
-
-def _print_metrics(output_csv):
-    """打印混淆矩阵和准确率"""
-    df = pd.read_csv(output_csv)
-    y_true = df['label'].values
-    y_pred = df[['p0', 'p1', 'p2']].values.argmax(axis=1)
-
-    acc = accuracy_score(y_true, y_pred)
-    cm = confusion_matrix(y_true, y_pred)
-
-    print("\n" + "=" * 40)
-    print(f"OVERALL ACCURACY: {acc * 100:.2f}%")
-    print("=" * 40)
-
-    print("\nCONFUSION MATRIX:")
-    print("真实类别(行) \\ 预测类别(列)")
-    print(pd.DataFrame(cm,
-                       index=[f'True_{i}' for i in range(3)],
-                       columns=[f'Pred_{i}' for i in range(3)]))
-    print("=" * 40)
+        print("\nCONFUSION MATRIX:")
+        print("真实类别(行) \\ 预测类别(列)")
+        print(pd.DataFrame(cm,
+                           index=[f'True_{i}' for i in range(3)],
+                           columns=[f'Pred_{i}' for i in range(3)]))
+        print("=" * 40)
 
 
 if __name__ == "__main__":
@@ -241,6 +197,10 @@ if __name__ == "__main__":
     parser.add_argument('--model_name', type=str, default='vit_giant_xformers',
                         help="模型名，目前支持vit_giant_xformers、vit_large、vit_huge")
 
+    parser.add_argument("--frame_step", type=int, default=2,
+                        help="Frame sampling step (default: 2)")
+    parser.add_argument("--frames_per_clip", type=int, default=16,
+                        help="Number of frames per clip (default: 16)")
     parser.add_argument("--restore_true", action="store_true",
                         help="Run robust evaluation with speckle noise ratios from 0.05 to 0.95")
 
@@ -249,8 +209,8 @@ if __name__ == "__main__":
     args = {
         "batch_size": 16,
         "img_size": 224,
-        "frames_per_clip": 16,
-        "frame_step": 2,
+        "frames_per_clip": opt.frames_per_clip,
+        "frame_step": opt.frame_step,
         "num_segments": 1,
         "num_views_per_segment": 1,
         "num_workers": 8,
@@ -259,7 +219,7 @@ if __name__ == "__main__":
 
     if opt.restore_true:
         ratios = np.arange(0.05, 1.0, 0.05)
-        out_dir = "./output/0506internal/"
+        out_dir = "./output/newinternal"
         if rank == 0:
             os.makedirs(out_dir, exist_ok=True)
 
