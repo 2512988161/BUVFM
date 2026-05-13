@@ -98,8 +98,12 @@ def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes
         model: Loaded VJEPA2 model
         classifier: Loaded AttentiveClassifier
     """
-    logger.info(f"Loading pretrained model from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    if checkpoint_path and checkpoint_path.strip():
+        logger.info(f"Loading pretrained model from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    else:
+        logger.info("No pretrained checkpoint provided — using random initialization")
+        checkpoint = None
 
     # Model configuration based on ultrasound_videos_full_fuse.yaml
     enc_kwargs = {
@@ -129,34 +133,35 @@ def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes
     model.out_layers = out_layers
     wrapper_kwargs["out_layers"] = out_layers
 
-    # Load pretrained weights
-    pretrained_dict = checkpoint[enc_kwargs["checkpoint_key"]]
-    
-    # Remove module., backbone., and model. prefixes if present
-    for prefix in ["module.", "backbone.", "model."]:
-        pretrained_dict = {
-            (k[len(prefix):] if k.startswith(prefix) else k): v 
-            for k, v in pretrained_dict.items()
-        }
-    
-    # Check for mismatched keys
-    for k, v in model.state_dict().items():
-        if k not in pretrained_dict:
-            logger.info(f'key "{k}" could not be found in loaded state dict')
-        elif pretrained_dict[k].shape != v.shape:
-            logger.info(f'key "{k}" is of different shape in model and loaded state dict')
-            pretrained_dict[k] = v
-    
-    # Load state dict with strict=False to ignore missing keys
-    msg = model.load_state_dict(pretrained_dict, strict=False)
-    extra = len(msg.unexpected_keys)
-    missing = len(msg.missing_keys)
-    matched = len(pretrained_dict) - extra
-    logger.info(f"loaded pretrained model: matched {matched}, extra {extra}, missing {missing}")
-    if extra > 0:
-        logger.info(f"extra keys: {msg.unexpected_keys}")
-    if missing > 0:
-        logger.info(f"missing keys: {msg.missing_keys}")
+    if checkpoint is not None:
+        # Load pretrained weights
+        pretrained_dict = checkpoint[enc_kwargs["checkpoint_key"]]
+
+        # Remove module., backbone., and model. prefixes if present
+        for prefix in ["module.", "backbone.", "model."]:
+            pretrained_dict = {
+                (k[len(prefix):] if k.startswith(prefix) else k): v
+                for k, v in pretrained_dict.items()
+            }
+
+        # Check for mismatched keys
+        for k, v in model.state_dict().items():
+            if k not in pretrained_dict:
+                logger.info(f'key "{k}" could not be found in loaded state dict')
+            elif pretrained_dict[k].shape != v.shape:
+                logger.info(f'key "{k}" is of different shape in model and loaded state dict')
+                pretrained_dict[k] = v
+
+        # Load state dict with strict=False to ignore missing keys
+        msg = model.load_state_dict(pretrained_dict, strict=False)
+        extra = len(msg.unexpected_keys)
+        missing = len(msg.missing_keys)
+        matched = len(pretrained_dict) - extra
+        logger.info(f"loaded pretrained model: matched {matched}, extra {extra}, missing {missing}")
+        if extra > 0:
+            logger.info(f"extra keys: {msg.unexpected_keys}")
+        if missing > 0:
+            logger.info(f"missing keys: {msg.missing_keys}")
 
     # Wrap with ClipAggregation
     model = ClipAggregation(
@@ -175,7 +180,7 @@ def build_model(checkpoint_path, resolution=224, frames_per_clip=16, num_classes
     )
     
     # Load classifier weights if present in checkpoint
-    if "classifiers" in checkpoint and checkpoint["classifiers"]:
+    if checkpoint is not None and "classifiers" in checkpoint and checkpoint["classifiers"]:
         classifier_dict = checkpoint["classifiers"][0] if isinstance(checkpoint["classifiers"], list) else checkpoint["classifiers"]
         # Remove module. prefix if present
         classifier_dict = {

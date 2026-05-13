@@ -77,7 +77,7 @@ class CustomVJEPADataset(VideoFolderDataset):
 # ================= 2. 参数配置 =================
 def parse_args():
     parser = argparse.ArgumentParser(description="Distributed Training for VJEPA2")
-    parser.add_argument('--pretrained_ckpt', type=str, required=True, help="VJEPA 预训练权重路径")
+    parser.add_argument('--pretrained_ckpt', type=str, default='', help="VJEPA 预训练权重路径，留空则随机初始化")
     parser.add_argument('--num_frames', type=int, default=16)
     parser.add_argument('--num_classes', type=int, default=3, help="分类类别数")
     parser.add_argument('--batch_size', type=int, default=4, help="VJEPA显存占用大，建议改小")
@@ -309,7 +309,8 @@ def main():
                     "classifiers":[classifier.module.state_dict()],
                     "epoch": epoch
                 }
-                torch.save(state_dict, f"{save_dir}/best_vjepa_model.pt")
+                acc_str = f"{best_val_acc:.2f}".replace('.', '')
+                torch.save(state_dict, f"{save_dir}/best_vjepa_model{acc_str}.pt")
                 
                 # 保存评估 CSV
                 combined_res =[item for sublist in all_rank_results for item in sublist]
