@@ -84,7 +84,6 @@ def parse_args():
     parser.add_argument('--epochs', type=int, default=50)
     parser.add_argument('--lr', type=float, default=5e-5, help="微调学习率")
     parser.add_argument('--freeze_backbone', action='store_true', help="冻结 VJEPA Encoder，仅训练 Classifier")
-    parser.add_argument('--com_exp', action='store_true', help="原始vjepa对比实验")
     parser.add_argument('--exp_name', type=str, default=None, help="实验名称后缀，会追加到 save_dir 和 logname")
     parser.add_argument('--model_name', type=str, default='vit_giant_xformers', help="模型名，目前支持vit_giant_xformers、vit_large、vit_huge")
     parser.add_argument('--train_dir', type=str, default="/home/lx/alg/videos_train", help="训练集组织成class_{x}")
@@ -105,8 +104,8 @@ def main():
     # 日志设置
     logger = logging.getLogger(__name__)
     if local_rank == 0:
-        log_dir = './logs_vjepa' if not args.com_exp else "./logs_vjepa/com"
-        
+        log_dir = './logs_vjepa'
+
         os.makedirs(log_dir, exist_ok=True)
         log_name = "vjepa_frozen.log" if args.freeze_backbone else "vjepa_full.log"
         if args.exp_name is not None:
@@ -165,8 +164,8 @@ def main():
         if local_rank == 0: logger.info(">> 全量微调模式 (Full Finetuning) <<")
 
     # DDP 包装
-    encoder = DDP(encoder, device_ids=[local_rank], find_unused_parameters=True)
-    classifier = DDP(classifier, device_ids=[local_rank], find_unused_parameters=True)
+    encoder = DDP(encoder, device_ids=[local_rank], find_unused_parameters=False)
+    classifier = DDP(classifier, device_ids=[local_rank], find_unused_parameters=False)
 
     # --- 损失与优化器 ---
     # 统计训练集中各类别的样本数，用于计算类别权重
@@ -192,8 +191,6 @@ def main():
 
     best_val_acc = 0.0
     save_dir = './ckpts/vjepa_frozen' if args.freeze_backbone else './ckpts/vjepa_full'
-    if args.com_exp:
-        save_dir = './ckpts/vjepa_ori'
     if args.exp_name is not None:
         save_dir = f"{save_dir}_{args.exp_name}"
     if local_rank == 0: os.makedirs(save_dir, exist_ok=True)

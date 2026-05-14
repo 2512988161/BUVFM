@@ -1,12 +1,18 @@
-# BUVFM — Breast Ultrasound Video Foundation Model
+<div align="center">
+<h1>BUVFM — Breast Ultrasound Video Foundation Model</h1>
+<!-- <a href="http://arxiv.org/abs/2509.11752"><img src='https://img.shields.io/badge/arXiv-Preprint-red' alt='Paper PDF'></a> -->
+<a href='https://huggingface.co/xenosscu/BUVFM'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Weights-blue'></a>
+<a href='https://2512988161.github.io/nmODE-V-pp/'><img src='https://img.shields.io/badge/Homepage-green' alt='Homepage'></a>
+<a href='http://buvfm.machineilab.org/'><img src='https://img.shields.io/badge/Demopage-blue' alt='Demopage'></a>
+<a href='https://github.com/2512988161/BUVFM'><img src='https://img.shields.io/badge/Github-red' alt='Github'></a>
+</div>
 
-Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embedding Predictive Architecture) ViT-Giant for medical ultrasound video classification, with a cascaded screening pipeline (MobileNetV3 + YOLO → VJEPA2). Supports multi-GPU distributed training and inference with mixed precision.
+BUVFM is the first breast ultrasound video foundation model, pretrained on 423K frames and 84K video sequences via self-supervised learning and fine-tuned for BI-RADS risk stratification. It powers AIBS, a cloud-edge system that enables non-physician ultrasound acquisition with real-time quality control, and achieves 95.42% macro sensitivity and 95.60% macro specificity across internal and 11 external cohorts.
 
 ## Table of Contents
 
-- [Model Architecture](#model-architecture)
+- [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
-- [Dependencies](#dependencies)
 - [Dataset Preparation](#dataset-preparation)
 - [Checkpoint Preparation](#checkpoint-preparation)
 - [Data Pipeline](#data-pipeline)
@@ -17,25 +23,71 @@ Fine-tuning [VJEPA2](https://github.com/facebookresearch/jepa) (Video Joint-Embe
 - [Results](#results)
 - [License](#license)
 
-## Model Architecture
+## Quick Start
 
-- **Backbone**: ViT-Giant (`vit_giant_xformers`), 1408 embed dim, 40 layers, 22 heads, 224×224 input
-- **Position encoding**: 3D Rotary Position Embedding (RoPE) — no learned positional embeddings
-- **Patch embedding**: 3D tubelets of 2×16×16 (temporal×spatial) → 1568 tokens per 16-frame clip
-- **Clip aggregation**: Multi-clip temporal concatenation with optional 1D sincos positional embeddings
-- **Classifier**: Attentive Classifier with cross-attention pooling (16 heads, 1 probe block)
-- **Output**: 3-class classification (class_0, class_1, class_2)
-- **Alternative backbones**: Also supports `vit_large`, `vit_huge` via `--model_name`
+### 1. Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+### 2. Download checkpoints
+
+```bash
+python download_ckpt.py
+```
+
+Downloads pretrained weights, fine-tuned checkpoints, and QC models from [Hugging Face Hub](https://huggingface.co/xenosscu/BUVFM) to `./ckpts/` and `./QC/`.
+
+### 3. Prepare your dataset
+
+Organize videos in an `ImageFolder`-style directory — each subfolder named `class_N` holds videos of that class:
+
+```
+dataset/
+├── train/
+│   ├── class_0/
+│   ├── class_1/
+│   └── class_2/
+└── val/
+    ├── class_0/
+    ├── class_1/
+    └── class_2/
+```
+
+Supported formats: `.mp4`, `.avi`, `.mov`, `.mkv`. See [Dataset Preparation](#dataset-preparation) for parameter details.
+
+### 4. Fine-tune the pretrained model
+
+```bash
+torchrun --master_port=29511 --nproc_per_node=2 train.py \
+  --train_dir /path/to/dataset/train \
+  --val_dir /path/to/dataset/val \
+  --pretrained_ckpt ./ckpts/vjepa-nmode-pretrain.pt \
+  --exp_name exp1
+```
+
+See [Training](#training) for all arguments (freeze backbone, learning rate, model variants, etc.).
+
+### 5. Run inference
+
+```bash
+torchrun --nproc_per_node=4 inference_ddp.py \
+    --checkpoint ./ckpts/vjepa_full/best_vjepa_model.pt \
+    --val_dir /path/to/dataset/val /path/to/dataset/test \
+    --output ./output/results.csv
+```
+
+See [Inference & Evaluation](#inference--evaluation) for single-GPU inference, robust evaluation, and more options.
+
 
 ## Project Structure
 
 ```
 BUVFM/
-├── train.py                  # Single-stage fine-tuning with DDP + AMP
-├── train_new.py              # Enhanced training (FocalLoss + warmup + cosine LR)
-├── inference.py              # Single-GPU validation inference & evaluation
-├── inference_ddp.py          # Multi-GPU distributed inference (primary)
-├── inference_ddp_old.py      # Legacy DDP inference
+├── download_ckpt.py           # Download all model weights from Hugging Face Hub
+├── train.py                  # Fine-tuning script
+├── inference_ddp.py          # Multi-GPU distributed inference 
 ├── test.py                   # Arbitrary-dir inference (hardcoded config)
 ├── app.py                    # Gradio 2-stage pipeline demo (port 9530)
 ├── pipeline_utils.py         # 2-stage pipeline: MobileNet+YOLO + VJEPA2+Grad-CAM
@@ -62,9 +114,7 @@ BUVFM/
 │   ├── run_pretrain_vae.py         # VideoVAEPlus pretraining entry
 │   ├── convert_checkpoint.py       # Pretrain ckpt → build_model format
 │   ├── prepare_data.py             # Generate annotation files from raw videos
-│   ├── methods/                    # MAE/VAE modeling, datasets, engines, masking
-│   ├── data/                       # Generated annotation files
-│   └── output/                     # Pretraining outputs
+│   └── methods/                    # MAE/VAE modeling, datasets, engines, masking
 ├── QC/
 │   ├── stage1.py                   # Standalone MobileNet+YOLO screener
 │   ├── quality_con_clip_save_ed5.py# Multi-GPU batch clip extraction
@@ -78,28 +128,7 @@ BUVFM/
 └── logs_vjepa/                     # Training logs (gitignored)
 ```
 
-## Dependencies
 
-- Python >= 3.8
-- PyTorch >= 2.0 (CUDA)
-- torchvision
-- [decord](https://github.com/dmlc/decord) (video decoding)
-- scikit-learn
-- pandas
-- tqdm
-- numpy
-- opencv-python
-- gradio
-- plotly
-- imageio
-- [timm](https://github.com/huggingface/pytorch-image-models) (for MobileNetV3)
-- [ultralytics](https://github.com/ultralytics/ultralytics) (for YOLO)
-
-Install:
-
-```bash
-pip install torch torchvision decord scikit-learn pandas tqdm numpy opencv-python gradio plotly imageio timm ultralytics
-```
 
 ## Dataset Preparation
 
@@ -132,9 +161,19 @@ Key dataset parameters:
 | `num_clips` | 1 | Number of clips per video |
 | `random_clip_sampling` | True/False | Random clip start (train) vs. center (val) |
 
-> **Note**: Both `train.py` and `train_new.py` apply class-0 undersampling to handle class imbalance (capped at 10,000 and 5,000 samples respectively), and use weighted loss functions.
+> **Note**: `train.py` applies class-0 undersampling to handle class imbalance (capped at 10,000), and use weighted loss functions.
 
 ## Checkpoint Preparation
+
+### Download Checkpoints from Hugging Face Hub
+
+Use `download_ckpt.py` to download all model weights (pretrained checkpoint, fine-tuned checkpoints, and QC models) from [xenosscu/BUVFM](https://huggingface.co/xenosscu/BUVFM) on Hugging Face Hub:
+
+```bash
+python download_ckpt.py
+```
+
+This downloads the full model repository to the current directory, preserving the expected directory structure (`ckpts/`, `QC/`).
 
 ### Pretrained Starting Point
 
@@ -216,21 +255,14 @@ python QC/quality_con_clip_save_ed5.py
 ## Pretraining
 
 See `pretraining/README.md` for full details.
-
-- [x] **VideoMAE (MAE)** — VideoMAEv2-style masked autoencoder. Encoder: VJEPA ViT-g, Decoder: shallow Transformer (512-dim, 4 layers). Tube masking (90%) + running-cell masking (50%), per-patch normalized MSE loss. 300 epochs on 500K+ unlabeled ultrasound videos.
-- [x] **VideoVAEPlus (VAE)** — ViT encoder → 2+1D Conv decoder with temporal compression + 3D PatchGAN discriminator. Loss: L1 + LPIPS + KL + adversarial. 100 epochs on unlabeled ultrasound videos.
-- [x] **Checkpoint conversion** — `pretraining/convert_checkpoint.py` converts MAE/VAE checkpoints to `build_model()`-compatible format for downstream fine-tuning.
-
-### Quick Start
-
 ```bash
 # MAE pretraining
 python pretraining/prepare_data.py --video_dirs /path/to/videos --output_dir pretraining/data
 torchrun --nproc_per_node=8 pretraining/run_pretrain_mae.py \
     --data_root /path/to/dataset --data_path pretraining/data/us_videomae_train.txt \
-    --output_dir pretraining/output/mae_vitg --batch_size 16 --epochs 300
+    --output_dir pretraining/output/mae_vitg --batch_size 16 --epochs 100
 python pretraining/convert_checkpoint.py --method videomae \
-    --input pretraining/output/mae_vitg/checkpoint-299.pth --output ./ckpts/vitg_mae.pt
+    --input pretraining/output/mae_vitg/checkpoint-99.pth --output ./ckpts/vitg_mae.pt
 
 # VAE pretraining
 torchrun --nproc_per_node=8 pretraining/run_pretrain_vae.py \
@@ -239,11 +271,6 @@ torchrun --nproc_per_node=8 pretraining/run_pretrain_vae.py \
 python pretraining/convert_checkpoint.py --method vae \
     --input pretraining/output/vae/checkpoint-99.pth --output ./ckpts/vitg_vae.pt
 ```
-
-### TODO
-
-- [ ] **BUVFM unified pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
-- [ ] **Knowledge distillation** — Distill the large ViT-Giant model to smaller architectures for efficient deployment.
 
 ## Training
 
@@ -428,9 +455,17 @@ export BUVFM_MAX_FILE_SIZE_MB=100
 
 | Checkpoint | Val Accuracy |
 |---|---|
-| best_vjepa_model9639(paper).pt.pt | 96.39% |
+| best_vjepa_model9639(paper).pt | 96.39% |
 
 Results from `train.py` training path (weighted CrossEntropyLoss).
+
+## Roadmap
+
+- [x] **VideoMAE (MAE)** — VideoMAEv2-style masked autoencoder with VJEPA ViT-g encoder and shallow Transformer decoder. Tube masking (90%) + running-cell masking (50%), per-patch normalized MSE loss.
+- [x] **VideoVAEPlus (VAE)** — ViT encoder → 2+1D Conv decoder with temporal compression + 3D PatchGAN discriminator. L1 + LPIPS + KL + adversarial loss.
+- [x] **Checkpoint conversion** — `pretraining/convert_checkpoint.py` converts MAE/VAE checkpoints to `build_model()`-compatible format for downstream fine-tuning.
+- [ ] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
+- [ ] **Knowledge distillation** — Distill the ViT-Giant model to smaller architectures for efficient deployment.
 
 ## License
 
