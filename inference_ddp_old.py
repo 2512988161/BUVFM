@@ -207,13 +207,13 @@ if __name__ == "__main__":
     opt = parser.parse_args()
 
     args = {
-        "batch_size": 16,
+        "batch_size": 8,
         "img_size": 224,
         "frames_per_clip": opt.frames_per_clip,
         "frame_step": opt.frame_step,
         "num_segments": 1,
         "num_views_per_segment": 1,
-        "num_workers": 8,
+        "num_workers": 4,
         "model_name": opt.model_name,
     }
 

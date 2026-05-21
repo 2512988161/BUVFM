@@ -46,6 +46,13 @@ convert_video.py
 vis.py
 distill/
 QC/.claude/
+merge_reader_pre.py
+cm.py
+pre_infer_merge_cm.py
+CLAUDE.md
+yolo26n.pt
+yolo11m.pt
+runs/
 
 # Large files
 # *.pt
