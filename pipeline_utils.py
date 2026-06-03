@@ -4,16 +4,18 @@ import tempfile
 import cv2
 import imageio.v3 as iio
 import numpy as np
-
 import torch
 import torch.nn.functional as F
 from decord import VideoReader, cpu
 from PIL import Image
-from torchvision import transforms
 
 from buildmodel import build_model
-from distill.cls.buildmodel import MobileNetV3Backbone
+from distill.quality_con import build_mobilenet_svm, get_svm_preprocess
 from utils import make_transforms
+
+YOLO_IMG_SIZE = 640
+YOLO_EXCLUDE_CLASS = 1
+YOLO_CONF_THRESHOLD = 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -247,9 +249,9 @@ def frames_to_video_file(frames, fps=8, prefix="gradcam"):
     return path
 
 
-YOLO_MODEL_PATH = "distill/det/output/ckpts/best_finetune_distilled.pt"
-SVM_MODEL_PATH = "distill/cls/output/ckpts/distilled.pt"
-YOLO_IMG_SIZE = 640
+YOLO_MODEL_PATH = "distill/det/output/ckpts/distilled.pt"
+SVM_MODEL_PATH = "distill/cls/output/ckpts/best_finetune_distilled.pt"
+
 YOLO_EXCLUDE_CLASS = 1
 YOLO_CONF_THRESHOLD = 0.5
 BATCH_SIZE = 16
@@ -257,17 +259,6 @@ BATCH_SIZE = 16
 
 def resolve_device():
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def build_mobilenet(device):
-    model = MobileNetV3Backbone(model_name="mobilenetv3_small_075", num_classes=2).to(device)
-    if not os.path.exists(SVM_MODEL_PATH):
-        raise FileNotFoundError(f"MobileNet checkpoint not found: {SVM_MODEL_PATH}")
-    ckpt = torch.load(SVM_MODEL_PATH, map_location=device)
-    state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
-    model.load_state_dict(state_dict)
-    model.eval()
-    return model
 
 
 def build_yolo(device):
@@ -279,7 +270,7 @@ def build_yolo(device):
 
 
 def load_stage1_models(device):
-    mobilenet_model = build_mobilenet(device)
+    mobilenet_model = build_mobilenet_svm(SVM_MODEL_PATH, device=device)
     try:
         yolo_model = build_yolo(device)
         yolo_device = device
@@ -293,28 +284,25 @@ def load_stage1_models(device):
 
 
 def build_stage1_preprocess():
-    return transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
+    return get_svm_preprocess()
 
 
 def draw_mobilenet_score(frame, score):
-    text = f"MB: {score:.3f}"
-    color = (0, 255, 0) if score < 0.5 else (0, 0, 255)
+    valid = 1.0 - score
+    text = f"Valid {valid:.2f}"
     font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.8
-    text_thickness = 2
-    (tw, th), _ = cv2.getTextSize(text, font, scale, text_thickness)
+    scale = 0.42
+    text_thickness = 1
+    (tw, th), baseline = cv2.getTextSize(text, font, scale, text_thickness)
+    x = frame.shape[1] - tw - 4
+    y = th + 4
     cv2.putText(
         frame,
         text,
-        (frame.shape[1] - tw - 10, th + 10),
+        (x, y),
         font,
         scale,
-        color,
+        (245, 245, 245),
         text_thickness,
         cv2.LINE_AA,
     )

@@ -25,6 +25,48 @@ if _VJEPA_ROOT not in sys.path:
 
 from distill.cls.buildmodel import MobileNetV3Backbone
 
+
+# ---------------------------------------------------------------------------
+# Reusable model builders (also imported by pipeline_utils.py)
+# ---------------------------------------------------------------------------
+
+def build_mobilenet_svm(checkpoint_path, model_name="mobilenetv3_small_075",
+                        num_classes=2, device="cpu"):
+    """Build MobileNetV3Backbone, load SVM checkpoint, return eval model.
+
+    Falls back to plain timm model if MobileNetV3Backbone construction fails.
+    The returned model always has a ``forward_full(x)`` method that returns logits.
+    """
+    try:
+        model = MobileNetV3Backbone(model_name=model_name, num_classes=num_classes).to(device)
+        if os.path.exists(checkpoint_path):
+            ckpt = torch.load(checkpoint_path, map_location=device)
+            state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
+            model.load_state_dict(state_dict)
+        model.eval()
+        return model
+    except Exception:
+        model = timm.create_model(model_name, pretrained=False, in_chans=3,
+                                  num_classes=num_classes).to(device)
+        if os.path.exists(checkpoint_path):
+            ckpt = torch.load(checkpoint_path, map_location=device)
+            state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
+            model.load_state_dict(state_dict)
+        model.forward_full = model.forward
+        model.eval()
+        return model
+
+
+def get_svm_preprocess():
+    """Return standard SVM/MobileNet preprocessing transform (ImageNet stats)."""
+    return transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+    ])
+
+
 # ================= 1. 环境设置 =================
 os.environ["OPENCV_VIDEOIO_PRIORITY_MSMF"] = "0"
 os.environ["OMP_NUM_THREADS"] = "4"
@@ -140,39 +182,15 @@ def run_worker(chunk_json_path, worker_id):
         return
 
     # --- B. 加载 MobileNet (SVM) 模型 ---
-    pretrain_model = "mobilenetv3_small_075"
     try:
-        svm_model = MobileNetV3Backbone(model_name=pretrain_model, num_classes=2).to(device)
-        if os.path.exists(SVM_MODEL_PATH):
-            ckpt = torch.load(SVM_MODEL_PATH, map_location=device)
-            state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
-            svm_model.load_state_dict(state_dict)
-        else:
-            print(f"[Worker {worker_id}] Warning: MobileNet Checkpoint not found at {SVM_MODEL_PATH}!")
-        svm_model.eval()
+        svm_model = build_mobilenet_svm(SVM_MODEL_PATH, device=device)
         print(f"[Worker {worker_id}] MobileNetV3 loaded.", flush=True)
     except Exception as e:
-        print(f"[Worker {worker_id}] MobileNetV3Backbone load failed:. Falling back to plain timm...", flush=True)
-        try:
-            svm_model = timm.create_model(pretrain_model, pretrained=False, in_chans=3, num_classes=2).to(device)
-            if os.path.exists(SVM_MODEL_PATH):
-                svm_model.load_state_dict(torch.load(SVM_MODEL_PATH, map_location=device))
-            else:
-                print(f"[Worker {worker_id}] Warning: MobileNet Checkpoint not found at {SVM_MODEL_PATH}!")
-            svm_model.forward_full = svm_model.forward  # 普通 timm 模型 forward 即返回 logits, 兼容下游 forward_full 调用
-            svm_model.eval()
-            print(f"[Worker {worker_id}] MobileNetV3 loaded.", flush=True)
-        except Exception as e2:
-            print(f"[Worker {worker_id}] Failed to load MobileNet: {e2}", flush=True)
-            return
+        print(f"[Worker {worker_id}] Failed to load MobileNet: {e}", flush=True)
+        return
 
     # --- C. MobileNet 预处理定义 ---
-    svm_preprocess = transforms.Compose([
-        transforms.Resize(256),              
-        transforms.CenterCrop(224),          
-        transforms.ToTensor(),
-        transforms.Normalize( (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
+    svm_preprocess = get_svm_preprocess()
     worker_results = {}     
     worker_lesion_clip_stats = {} # 专门记录每个视频包含的病灶 Clip 数量
     
@@ -429,9 +447,9 @@ if __name__ == "__main__":
 
     # --- 模型路径 ---
     parser.add_argument("--yolo_model_path", type=str,
-                        default='distill/det/output/ckpts/best_finetune_distilled.pt'))
+                        default='distill/det/output/ckpts/distilled.pt')
     parser.add_argument("--svm_model_path", type=str,
-                        default='distill/cls/output/ckpts/distilled.pt',
+                        default='distill/cls/output/ckpts/best_finetune_distilled.pt',
                         help="MobileNet (SVM) 路径")
 
     # --- 硬件参数 ---
