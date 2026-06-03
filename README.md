@@ -18,10 +18,19 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [Data Pipeline](#data-pipeline)
 - [Pretraining](#pretraining)
 - [Training](#training)
+- [Knowledge Distillation](#knowledge-distillation)
 - [Inference & Evaluation](#inference--evaluation)
 - [Demo Applications](#demo-applications)
 - [Results](#results)
 - [License](#license)
+
+## Roadmap
+
+- [x] **VideoMAE (MAE)** — VideoMAEv2-style masked autoencoder with VJEPA ViT-g encoder and shallow Transformer decoder. Tube masking (90%) + running-cell masking (50%), per-patch normalized MSE loss.
+- [x] **VideoVAEPlus (VAE)** — ViT encoder → 2+1D Conv decoder with temporal compression + 3D PatchGAN discriminator. L1 + LPIPS + KL + adversarial loss.
+- [x] **Checkpoint conversion** — `pretraining/convert_checkpoint.py` converts MAE/VAE checkpoints to `build_model()`-compatible format for downstream fine-tuning.
+- [ ] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
+- [x] **Knowledge distillation** — Distill the ViT-Giant model to smaller architectures for efficient deployment.
 
 ## Quick Start
 
@@ -72,13 +81,19 @@ See [Training](#training) for all arguments (freeze backbone, learning rate, mod
 ### 5. Run inference
 
 ```bash
-torchrun --nproc_per_node=4 inference_ddp.py \
-    --checkpoint ./ckpts/vjepa_full/best_vjepa_model.pt \
-    --val_dir /path/to/dataset/val /path/to/dataset/test \
-    --output ./output/results.csv
+export TRPORT=29599
+export CKPT=/path/to/ckpt
+export VAL_DIR='/path/to/val/dir'
+export OUT='test'
+export EXTRA=""
+export FS=2
+export FPC=16
+torchrun --master_port=$TRPORT --nproc_per_node=4 inference_ddp_old.py \
+    --val_dir $VAL_DIR --checkpoint $CKPT --output ./output/$OUT.csv \
+    $EXTRA --frame_step $FS --frames_per_clip $FPC
 ```
 
-See [Inference & Evaluation](#inference--evaluation) for single-GPU inference, robust evaluation, and more options.
+See [Inference & Evaluation](#inference--evaluation) for more options.
 
 
 ## Project Structure
@@ -87,7 +102,7 @@ See [Inference & Evaluation](#inference--evaluation) for single-GPU inference, r
 BUVFM/
 ├── download_ckpt.py           # Download all model weights from Hugging Face Hub
 ├── train.py                  # Fine-tuning script
-├── inference_ddp.py          # Multi-GPU distributed inference 
+├── inference_ddp_old.py      # Multi-GPU distributed inference 
 ├── test.py                   # Arbitrary-dir inference (hardcoded config)
 ├── app.py                    # Gradio 2-stage pipeline demo (port 9530)
 ├── pipeline_utils.py         # 2-stage pipeline: MobileNet+YOLO + VJEPA2+Grad-CAM
@@ -115,6 +130,16 @@ BUVFM/
 │   ├── convert_checkpoint.py       # Pretrain ckpt → build_model format
 │   ├── prepare_data.py             # Generate annotation files from raw videos
 │   └── methods/                    # MAE/VAE modeling, datasets, engines, masking
+├── distill/
+│   ├── README.md                   # Distillation usage guide
+│   ├── cls/                        # Classification distillation (ViT-G → MobileNetV3)
+│   │   ├── distill.py              # Stage 1 — feature alignment on videos
+│   │   ├── finetune.py             # Stage 2 — 2D image classification fine-tuning
+│   │   └── infer.py                # Stage 3 — inference → CSV
+│   └── det/                        # Detection distillation (ViT-G → YOLO11m)
+│       ├── train.py                # Stage 1 — YOLO training + feature alignment
+│       ├── finetune.py             # Stage 1.1 — full YOLO fine-tuning
+│       └── infer.py                # Stage 2 — inference → JSON
 ├── QC/
 │   ├── stage1.py                   # Standalone MobileNet+YOLO screener
 │   ├── quality_con_clip_save_ed5.py# Multi-GPU batch clip extraction
@@ -323,24 +348,27 @@ torchrun --nproc_per_node=4 train.py \
 - **Checkpoints**: `./ckpts/vjepa_full/best_vjepa_model.pt` (best by val accuracy)
 - **Eval CSV**: `./ckpts/vjepa_full/best_vjepa_eval.csv` (per-video predictions)
 
+## Knowledge Distillation
+
+See [distill/README.md](distill/README.md) for details.
+
 ## Inference & Evaluation
 
 ### Multi-GPU Distributed Inference (Primary)
 
-Use `inference_ddp.py` with `torchrun` for parallel inference across GPUs:
+Use `inference_ddp_old.py` with `torchrun` for parallel inference across GPUs:
 
 ```bash
-# Standard inference
-torchrun --nproc_per_node=4 inference_ddp.py \
-    --checkpoint ./ckpts/vjepa_full/best_vjepa_model9639\(paper\).pt \
-    --val_dir /path/to/val /path/to/test \
-    --output ./output/results.csv
-
-# Robust evaluation with speckle noise
-torchrun --nproc_per_node=4 inference_ddp.py \
-    --checkpoint ./ckpts/vjepa_full/best_vjepa_model9639\(paper\).pt \
-    --val_dir /path/to/val \
-    --restore_true
+export TRPORT=29599
+export CKPT=/path/to/ckpt
+export VAL_DIR='/path/to/val/dir'
+export OUT='test'
+export EXTRA=""
+export FS=2
+export FPC=16
+torchrun --master_port=$TRPORT --nproc_per_node=4 inference_ddp_old.py \
+    --val_dir $VAL_DIR --checkpoint $CKPT --output ./output/$OUT.csv \
+    $EXTRA --frame_step $FS --frames_per_clip $FPC
 ```
 
 | Argument | Default | Description |
@@ -349,38 +377,24 @@ torchrun --nproc_per_node=4 inference_ddp.py \
 | `--val_dir` | (required) | One or more validation directories |
 | `--output` | `./output/...` | Output CSV path |
 | `--model_name` | `vit_giant_xformers` | Backbone variant |
+| `--frame_step` | 2 | Step between sampled frames |
+| `--frames_per_clip` | 16 | Frames sampled per clip |
 | `--restore_true` | False | Run robust evaluation across speckle noise ratios (0.05–0.95) |
 
 Each rank writes a temp CSV; rank 0 merges and deduplicates. Supports resume (skips already-processed videos if the output CSV exists).
 
-### Single-GPU Inference
-
-`inference.py` provides the same functionality on a single GPU:
-
-```bash
-python inference.py --checkpoint ./ckpts/vjepa_full/best_vjepa_model9639\(paper\).pt --val_dir /path/to/val
-```
-
 ### Arbitrary Directory Inference (no labels required)
-
 ```bash
 python test.py
 ```
-
 Edit the following variables in `test.py` before running:
 - `checkpoint_path` — path to the fine-tuned checkpoint
 - `input_dir` — path to directory containing videos (recursive scan)
 - `output_csv` — output CSV path
 
-### Speckle Noise Robustness
+## Demo
 
-The `--restore_true` flag enables robustness evaluation by applying multiplicative Gaussian speckle noise to video frames at ratios from 0.05 to 0.95. The `RobustVideoTransform` class is in `utils.py`; the underlying `apply_speckle_noise` function is in `src/datasets/utils/video/transforms.py`.
-
-Without `--restore_true`, results are saved to the specified output CSV (or `./output/inference_results.csv` for `inference.py`). With `--restore_true`, results are saved per noise level to `./output/robust/inference_result_{ratio}.csv` (or `./output/0506internal/` for `inference_ddp.py`).
-
-## Demo Applications
-
-### 2-Stage Pipeline Demo (Gradio)
+### 2-Stage Pipeline Demo
 
 A web-based interactive demo implementing a cascaded 2-stage inference pipeline:
 
@@ -390,19 +404,6 @@ Video Input → [Stage 1: Screening] → [Stage 2: Risk Grading]
           MobileNetV3 + YOLO           VJEPA2 ViT-Giant
           No lesions? → STOP           3-class probs + Grad-CAM
 ```
-
-#### Stage 1 — Rapid Screening
-
-Lightweight models quickly screen for lesions in each video frame:
-- **MobileNetV3-Small**: Frame-level lesion vs. no-lesion classification. Frames with low lesion probability trigger YOLO.
-- **YOLO**: Bounding box detection and localization on suspected lesion frames.
-- Pipeline stops if no lesions are detected, avoiding unnecessary heavy computation.
-
-#### Stage 2 — VJEPA2 Risk Grading
-
-Full VJEPA2 ViT-Giant performs 3-class risk classification with Grad-CAM visualization for interpretability:
-- **Model**: VJEPA2 ViT-Giant with AttentiveClassifier
-- **Output**: 3-class probability bar chart + Grad-CAM comparison video
 
 #### Running the Demo
 
@@ -416,57 +417,20 @@ Open http://localhost:9530 in your browser, or visit the online demo at [http://
 Pipeline logic and model interfaces (MobileNetV3, YOLO, VJEPA2, Grad-CAM) are in `pipeline_utils.py`.
 
 ### Hugging Face Space
-
 The Gradio demo in this repository is deployed at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
 
-#### Space entrypoint
-
-- App entry: `app.py`
-- Dependencies: `requirements.txt`
-- Demo assets: `assets/`
-- Model weights used by the demo:
-  - `ckpts/vjepa_full/best_vjepa_model9639(paper).pt`
-  - `QC/best_640_s_60e(2).pt`
-  - `QC/mobilenetv3_small_075_yl_241222(3).pth`
-
-#### Notes for the first Space version
-
-- This first deployment targets a **CPU Space**.
-- The app should start normally, but the first inference can be slow because the VJEPA2 checkpoint is large.
-- The model is loaded lazily on the first pipeline run.
-- If build time or repo size becomes a problem, the next step is to move weights to the Hugging Face Hub and download them at startup.
-
 #### Local run
-
 ```bash
+pip install gradio plotly timm ultralytics
 pip install -r requirements.txt
-python app.py
+CUDA_VISIBLE_DEVICES=1 python app.py
 ```
-
 Optional environment variables:
-
 ```bash
 export BUVFM_CHECKPOINT_PATH=/absolute/path/to/checkpoint.pt
 export BUVFM_ASSETS_DIR=/absolute/path/to/assets
 export BUVFM_MAX_FILE_SIZE_MB=100
 ```
 
-## Results
-
-| Checkpoint | Val Accuracy |
-|---|---|
-| best_vjepa_model9639(paper).pt | 96.39% |
-
-Results from `train.py` training path (weighted CrossEntropyLoss).
-
-## Roadmap
-
-- [x] **VideoMAE (MAE)** — VideoMAEv2-style masked autoencoder with VJEPA ViT-g encoder and shallow Transformer decoder. Tube masking (90%) + running-cell masking (50%), per-patch normalized MSE loss.
-- [x] **VideoVAEPlus (VAE)** — ViT encoder → 2+1D Conv decoder with temporal compression + 3D PatchGAN discriminator. L1 + LPIPS + KL + adversarial loss.
-- [x] **Checkpoint conversion** — `pretraining/convert_checkpoint.py` converts MAE/VAE checkpoints to `build_model()`-compatible format for downstream fine-tuning.
-- [ ] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
-- [ ] **Knowledge distillation** — Distill the ViT-Giant model to smaller architectures for efficient deployment.
-
 ## License
-
 Licensed under the MIT License.
