@@ -104,8 +104,7 @@ def main():
     # 日志设置
     logger = logging.getLogger(__name__)
     if local_rank == 0:
-        log_dir = './logs_vjepa'
-
+        log_dir = './output/logs_vjepa'
         os.makedirs(log_dir, exist_ok=True)
         log_name = "vjepa_frozen.log" if args.freeze_backbone else "vjepa_full.log"
         if args.exp_name is not None:

@@ -1,6 +1,26 @@
+```bash
+# MAE pretraining
+python pretraining/prepare_data.py --video_dirs /path/to/videos --output_dir pretraining/data
+torchrun --nproc_per_node=8 pretraining/run_pretrain_mae.py \
+    --data_root /path/to/dataset --data_path pretraining/data/us_videomae_train.txt \
+    --output_dir pretraining/output/mae_vitg --batch_size 16 --epochs 100
+python pretraining/convert_checkpoint.py --method videomae \
+    --input pretraining/output/mae_vitg/checkpoint-99.pth --output ./ckpts/vitg_mae.pt
+
+# VAE pretraining
+torchrun --nproc_per_node=8 pretraining/run_pretrain_vae.py \
+    --data_root /path/to/dataset --data_path pretraining/data/us_videomae_train.txt \
+    --output_dir pretraining/output/vae --batch_size 2 --epochs 100
+python pretraining/convert_checkpoint.py --method vae \
+    --input pretraining/output/vae/checkpoint-99.pth --output ./ckpts/vitg_vae.pt
+```
+
+
+
 # VJEPA2 VideoMAEv2 Pretraining
 
 基于 VideoMAEv2 的 MAE (Masked Autoencoder) 自监督预训练方案，在 500K+ 无标签超声视频上预训练 ViT-g 模型。
+
 
 ## 目录结构
 

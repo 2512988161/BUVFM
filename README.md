@@ -15,7 +15,6 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [Project Structure](#project-structure)
 - [Dataset Preparation](#dataset-preparation)
 - [Checkpoint Preparation](#checkpoint-preparation)
-- [Data Pipeline](#data-pipeline)
 - [Pretraining](#pretraining)
 - [Training](#training)
 - [Knowledge Distillation](#knowledge-distillation)
@@ -26,6 +25,11 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 
 ## Roadmap
 
+- [x] **VJEPA fine-tuning** — Downstream BI-RADS classification on ultrasound videos with ViT-Giant backbone.
+- [x] **Inference & evaluation** — Multi-GPU distributed inference, t-SNE/PCA visualization, speckle noise robustness testing.
+- [x] **QC screening pipeline** — MobileNetV3 + YOLO frame-level lesion screening and clip extraction.
+- [x] **2-Stage demo** — Gradio web app: Stage 1 (MobileNetV3+YOLO screening) → Stage 2 (VJEPA2+Grad-CAM risk grading).
+- [x] **Hugging Face Hub release** — Pretrained weights, fine-tuned checkpoints, and QC models on [Hugging Face](https://huggingface.co/xenosscu/BUVFM).
 - [x] **VideoMAE (MAE)** — VideoMAEv2-style masked autoencoder with VJEPA ViT-g encoder and shallow Transformer decoder. Tube masking (90%) + running-cell masking (50%), per-patch normalized MSE loss.
 - [x] **VideoVAEPlus (VAE)** — ViT encoder → 2+1D Conv decoder with temporal compression + 3D PatchGAN discriminator. L1 + LPIPS + KL + adversarial loss.
 - [x] **Checkpoint conversion** — `pretraining/convert_checkpoint.py` converts MAE/VAE checkpoints to `build_model()`-compatible format for downstream fine-tuning.
@@ -149,8 +153,8 @@ BUVFM/
 │   ├── vjepa-nmode-pretrain.pt     # Standard pretrained weights (fine-tuning start)
 │   └── vjepa_full/                 # Fine-tuned checkpoints + eval CSVs
 ├── assets/                         # 16 example videos (4 per category: Class0/1/2/NO)
-├── output/                         # Inference result CSVs & t-SNE outputs
-└── logs_vjepa/                     # Training logs (gitignored)
+└── output/                         # Inference result CSVs & t-SNE outputs
+
 ```
 
 
@@ -208,94 +212,13 @@ Fine-tuning starts from `./ckpts/vjepa-nmode-pretrain.pt`. Alternative pretraine
 
 Fine-tuned checkpoints are saved under `ckpts/vjepa_full/` (or variant directories like `vjepa_full_maee1`, `vjepa_full_newval`, etc.). Naming convention: `best_vjepa_model.pt` (best by validation accuracy).
 
-## Data Pipeline
 
-The inference pipeline processes each video through the following steps:
 
-1. **Frame Sampling**
-   - Uses `decord.VideoReader` to decode video to numpy `[T, H, W, 3]`, uint8, RGB, channels-last.
-   - Samples 16 frames with `frame_step=2`, evenly from the video start (`np.linspace(0, 32, 16)` → frame indices `[0, 2, 4, ..., 30]`).
-   - If the video has fewer than 32 frames, the last frame is repeated to pad.
-
-2. **Resize (short side to 256)**
-   - Preserves aspect ratio, resizes the short side to 256 pixels.
-   - Uses `cv2.resize` with bilinear interpolation (`INTER_LINEAR`).
-   - `short_side = crop_size * 256 / 224 = 256`.
-
-3. **CenterCrop (224×224)**
-   - Center-crops a 224×224 square region.
-   - Output: numpy `[16, 224, 224, 3]`, uint8, RGB.
-
-4. **ClipToTensor (format conversion + normalize to [0, 1])**
-   - HWC → CHW transpose: `(16, 224, 224, 3)` → `(3, 16, 224, 224)`.
-   - Divides by 255: uint8 [0, 255] → float32 [0.0, 1.0].
-   - Preserves RGB channel order throughout.
-
-5. **Normalize (ImageNet statistics)**
-   - Channel-wise: `mean = (0.485, 0.456, 0.406)`, `std = (0.229, 0.224, 0.225)`.
-   - Output range: ~[-2.1, 2.6], float32.
-
-6. **Packaging & Batching**
-   - Each transformed clip is wrapped as `[[tensor(3, 16, 224, 224)]]` (outer list = clips, inner list = views; both are 1 during inference).
-   - `DataLoader` stacks to batch: `[B, 3, 16, 224, 224]`.
-
-7. **Model Input**
-   - `PatchEmbed3D`: `Conv3d(3 → 1408, kernel=(2,16,16), stride=(2,16,16))`.
-   - Output: `[B, 8, 14, 14]` tokens (8 temporal × 14 height × 14 width = 1568 tokens).
-   - ViT + AttentiveClassifier → 3-class logits → Softmax.
-
-### QC Screening (Stage 1)
-
-The `QC/` directory contains standalone tools for rapid ultrasound video screening using MobileNetV3 + YOLO.
-
-#### QC/stage1.py — Single-Video Screener
-
-A frame-level screener: MobileNetV3 classifies each frame (lesion vs. no-lesion), and YOLO detects bounding boxes on suspected lesion frames.
-
-```bash
-python QC/stage1.py /path/to/video.mp4
-python QC/stage1.py /path/to/video/directory   # recursive scan
-python QC/stage1.py /path/to/video.mp4 --batch-size 32
-```
-
-Outputs per-frame JSON results and an annotated video to `./output/`.
-
-#### QC/quality_con_clip_save_ed5.py — Batch Clip Extraction
-
-Multi-GPU batch processing pipeline: screens videos frame-by-frame with MobileNetV3 + YOLO, extracts lesion candidate clips where lesions are detected over consecutive frames. Saves 6 clips per video.
-
-Configure input/output paths at the top of the script, then run:
-
-```bash
-python QC/quality_con_clip_save_ed5.py
-```
-
-#### QC Models
-
-| File | Description |
-|---|---|
-| `QC/mobilenetv3_small_075_yl_241222(3).pth` | MobileNetV3-Small 0.75x (2-class: lesion vs. no-lesion) |
-| `QC/best_640_s_60e(2).pt` | YOLO object detector (bounding box localization) |
 
 ## Pretraining
 
 See `pretraining/README.md` for full details.
-```bash
-# MAE pretraining
-python pretraining/prepare_data.py --video_dirs /path/to/videos --output_dir pretraining/data
-torchrun --nproc_per_node=8 pretraining/run_pretrain_mae.py \
-    --data_root /path/to/dataset --data_path pretraining/data/us_videomae_train.txt \
-    --output_dir pretraining/output/mae_vitg --batch_size 16 --epochs 100
-python pretraining/convert_checkpoint.py --method videomae \
-    --input pretraining/output/mae_vitg/checkpoint-99.pth --output ./ckpts/vitg_mae.pt
 
-# VAE pretraining
-torchrun --nproc_per_node=8 pretraining/run_pretrain_vae.py \
-    --data_root /path/to/dataset --data_path pretraining/data/us_videomae_train.txt \
-    --output_dir pretraining/output/vae --batch_size 2 --epochs 100
-python pretraining/convert_checkpoint.py --method vae \
-    --input pretraining/output/vae/checkpoint-99.pth --output ./ckpts/vitg_vae.pt
-```
 
 ## Training
 
@@ -344,11 +267,11 @@ torchrun --nproc_per_node=4 train.py \
 
 ### Training Output
 
-- **Logs**: `./logs_vjepa/vjepa_full.log` (or `vjepa_frozen.log` if `--freeze_backbone`)
+- **Logs**: `./output/logs_vjepa/vjepa_full.log` (or `vjepa_frozen.log` if `--freeze_backbone`)
 - **Checkpoints**: `./ckpts/vjepa_full/best_vjepa_model.pt` (best by val accuracy)
 - **Eval CSV**: `./ckpts/vjepa_full/best_vjepa_eval.csv` (per-video predictions)
 
-## Knowledge Distillation
+## Knowledge Distillation for Edge-Side Quality Control Model
 
 See [distill/README.md](distill/README.md) for details.
 

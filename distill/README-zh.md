@@ -7,9 +7,9 @@ ViT-G 教师 → 轻量学生模型，两阶段知识蒸馏。
 ## CLS — 分类蒸馏 (ViT-G → MobileNetV3-Small)
 
 ```
-Stage 1: distill.py         视频 → 逐帧学生特征 时序池化 → 与教师对齐   
-Stage 2: finetune.py        蒸馏 backbone → 分类头  2cls 图像数据集微调
-Stage 3: infer.py           图像分类推理 → 输出 CSV
+Stage 1: distill.py          Stage 2: finetune.py         Stage 3: infer.py
+视频 → 逐帧学生特征            蒸馏 backbone → 分类头        图像分类推理
+时序池化 → 与教师对齐           2cls 图像数据集微调            输出 CSV
 ```
 
 | 权重文件 | 阶段 | 大小 | 说明 |
@@ -169,3 +169,36 @@ python distill/det/infer.py \
     --label_dir /home/lx/dataset/6cls_detection/labels/val2017/ \
     --conf 0.25 --imgsz 640
 ```
+
+---
+
+## QC — 质量控制筛查
+
+`quality_con.py` — 多 GPU 级联筛查，使用蒸馏模型（MobileNetV3 + YOLO）进行逐帧病灶检测和片段提取。
+
+```
+输入视频 → MobileNetV3（逐帧分类）→ YOLO（仅低置信度帧）→ 每个视频提取 6 个片段
+```
+
+### 用法
+
+```bash
+python distill/quality_con.py \
+    --input_folder /path/to/videos \
+    --yolo_model_path distill/det/output/ckpts/distilled.pt \
+    --svm_model_path distill/cls/output/ckpts/best_finetune_distilled.pt \
+    --num_gpus 4 --batch_size 16
+```
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--input_folder` | (必填) | 视频目录（递归扫描） |
+| `--yolo_model_path` | distilled.pt | 蒸馏后的 YOLO 检测器 |
+| `--svm_model_path` | ckpt 路径 | 蒸馏后的 MobileNetV3 分类器 |
+| `--num_gpus` | 4 | GPU 数量 |
+| `--batch_size` | 16 | 每个 Worker 的批大小 |
+| `--yolo_conf_threshold` | 0.5 | YOLO 置信度阈值 |
+| `--consecutive_frames` | 8 | 触发片段保存的连续检测帧数 |
+| `--output_json_name` | output/QC/... | 最终汇总 JSON |
+| `--clip_save_dir` | output/QC/... | 提取片段保存目录 |
+| `--video_output_dir` | (空) | 可选的标注视频输出 |

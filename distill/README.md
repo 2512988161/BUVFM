@@ -50,7 +50,7 @@ videos_train/
 ```bash
 torchrun --nproc_per_node=4 distill/cls/distill.py \
     --teacher_ckpt './ckpts/vjepa_full/best_vjepa_model9639(paper).pt' \
-    --video_dir /home/lx/dataset/videos_train \
+    --video_dir /path/to/videos_train \
     --batch_size 40 --epochs 50
 ```
 
@@ -59,7 +59,7 @@ torchrun --nproc_per_node=4 distill/cls/distill.py \
 ```bash
 torchrun --nproc_per_node=4 distill/cls/finetune.py \
     --distilled_ckpt distill/cls/output/ckpts/best_distill.pt \
-    --train_dir /home/lx/dataset/2cls_classification/train \
+    --train_dir /path/to/2cls_classification/train \
     --output_dir distill/cls/output/ft-distill-0525 \
     --epochs 200 --batch_size 512
 ```
@@ -70,13 +70,13 @@ torchrun --nproc_per_node=4 distill/cls/finetune.py \
 # Distilled model
 python distill/cls/infer.py \
     --model_path distill/cls/output/ckpts/best_finetune_distilled.pt \
-    --data_dir /home/lx/dataset/2cls_classification/val \
+    --data_dir /path/to/2cls_classification/val \
     --output_csv distill/cls/output/infer/distilled/predictions.csv
 
 # From-scratch model
 python distill/cls/infer.py \
     --model_path distill/cls/output/ckpts/best_finetune_scratch.pt \
-    --data_dir /home/lx/dataset/2cls_classification/val \
+    --data_dir /path/to/2cls_classification/val \
     --output_csv distill/cls/output/infer/scratch/predictions.csv
 ```
 
@@ -136,7 +136,7 @@ Each label `.txt` (YOLO normalized format):
 ```bash
 PYTHONPATH=$(pwd) python distill/det/train.py \
     --teacher_ckpt './ckpts/vjepa_full/best_vjepa_model9639(paper).pt' \
-    --data /home/lx/dataset/6cls_detection/data.yaml \
+    --data /path/to/data.yaml \
     --model yolo11m.pt --imgsz 640 --batch 256 --epochs 100 \
     --output_dir distill/det/output/distill-cls-ckpt \
     --device 0,1,2,3
@@ -147,7 +147,7 @@ PYTHONPATH=$(pwd) python distill/det/train.py \
 ```bash
 torchrun --master_port=12333 --nproc_per_node=4 distill/det/finetune.py \
     --distilled_ckpt 'yolo11m.pt' \
-    --data /home/lx/dataset/6cls_detection/data.yaml \
+    --data /path/to/data.yaml \
     --exp_name finetune-s --imgsz 640 --batch 256
 ```
 
@@ -159,8 +159,8 @@ export modelpath=distill/det/output/ckpts/distilled.pt
 export infername="distilled"
 python distill/det/infer.py \
     --model_path $modelpath --output distill/det/output/infer/${infername} \
-    --data_dir /home/lx/dataset/6cls_detection/images/val2017/ \
-    --label_dir /home/lx/dataset/6cls_detection/labels/val2017/ \
+    --data_dir /path/to/dataset_root/images/val2017/ \
+    --label_dir /path/to/dataset_root/labels/val2017/ \
     --conf 0.25 --imgsz 640
 
 # From-scratch model
@@ -168,7 +168,40 @@ export modelpath=distill/det/output/ckpts/ft-scratch.pt
 export infername="ft-scratch"
 python distill/det/infer.py \
     --model_path $modelpath --output distill/det/output/infer/${infername} \
-    --data_dir /home/lx/dataset/6cls_detection/images/val2017/ \
-    --label_dir /home/lx/dataset/6cls_detection/labels/val2017/ \
+    --data_dir /path/to/dataset_root/images/val2017/ \
+    --label_dir /path/to/dataset_root/labels/val2017/ \
     --conf 0.25 --imgsz 640
 ```
+
+---
+
+## QC — Quality Control Screening
+
+`distill/quality_con.py` — Multi-GPU cascaded screening using distilled models (MobileNetV3 + YOLO) for frame-level lesion detection and clip extraction.
+
+```
+Input video → MobileNetV3 (frame classification) → YOLO (low-confidence frames only) → 6 clips per video
+```
+
+### Usage
+
+```bash
+python distill/quality_con.py \
+    --input_folder /path/to/videos \
+    --yolo_model_path distill/det/output/ckpts/distilled.pt \
+    --svm_model_path distill/cls/output/ckpts/best_finetune_distilled.pt \
+    --num_gpus 4 --batch_size 16
+```
+
+| Argument | Default | Description |
+|---|---|---|
+| `--input_folder` | (required) | Video directory (recursive scan) |
+| `--yolo_model_path` | distilled.pt | Distilled YOLO detector |
+| `--svm_model_path` | ckpt path | Distilled MobileNetV3 classifier |
+| `--num_gpus` | 4 | Number of GPUs |
+| `--batch_size` | 16 | Batch size per worker |
+| `--yolo_conf_threshold` | 0.5 | YOLO confidence threshold |
+| `--consecutive_frames` | 8 | Consecutive frames to trigger clip save |
+| `--output_json_name` | output/QC/... | Final aggregated JSON |
+| `--clip_save_dir` | output/QC/... | Extracted clips directory |
+| `--video_output_dir` | (empty) | Optional annotated video output |

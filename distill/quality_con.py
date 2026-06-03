@@ -31,29 +31,6 @@ os.environ["OMP_NUM_THREADS"] = "4"
 os.environ["MKL_NUM_THREADS"] = "4"
 cv2.setNumThreads(0)
 
-# ================= 2. 配置区域 (已改为命令行参数, 默认值见 parse_args) =================
-
-# # --- 输入/输出路径 ---
-# INPUT_FOLDER = "/home/lx/dataset/reader_0517_orilong"
-# OUTPUT_JSON_NAME = "merged_models_frame_results_desensitization_class_0506.json" # 最终汇总的JSON文件名
-# CLIP_SAVE_DIR = "reader_study_clip_save" # 提取的clip保存主文件夹
-#
-# # --- 模型路径 ---
-# YOLO_MODEL_PATH = os.path.join(_VJEPA_ROOT, 'runs/detect/distill-640-new/train/weights/epoch30.pt')
-# # MobileNet (SVM) 路径
-# SVM_MODEL_PATH = os.path.join(_VJEPA_ROOT, 'distill/cls/output/ft-distill-0525/best_finetune_9828.pt')
-#
-# # --- 硬件参数 ---
-# NUM_GPUS = 4
-# WORKERS_PER_GPU = 1     # 两个模型同时运行显存压力大，建议每张卡1个Worker
-# BATCH_SIZE = 16         # MobileNet比ViT-Giant轻量很多，可以适当调大Batch Size，这里保守设为16
-#
-# # --- YOLO & Clip 提取参数 ---
-# YOLO_IMG_SIZE = 640
-# YOLO_EXCLUDE_CLASS = 1         # YOLO 排除的类别ID (原代码逻辑)
-# YOLO_CONF_THRESHOLD = 0.5      # YOLO 判定有病灶的置信度阈值
-# CONSECUTIVE_FRAMES = 8         # 触发保存机制的连续检测帧数
-
 # ================= 3. 可视化函数 =================
 def visualize_video(all_frames, video_frame_results, yolo_model, width, height, fps, out_path, device):
     """在完整视频上可视化 YOLO class-0 检测框和 MobileNet 分类分数。"""
@@ -445,21 +422,16 @@ if __name__ == "__main__":
     parser.add_argument("--input_folder", type=str,
                         default="/home/lx/dataset/reader_0517_orilong")
     parser.add_argument("--output_json_name", type=str,
-                        default="output/QC/merged_models_frame_results_desensitization_class_0506.json",
+                        default="output/QC/test.json",
                         help="最终汇总的JSON文件名")
-    parser.add_argument("--clip_save_dir", type=str, default="output/QC/reader_study_clip_save",
+    parser.add_argument("--clip_save_dir", type=str, default="output/QC/clip_save",
                         help="提取的clip保存主文件夹")
 
     # --- 模型路径 ---
-    # parser.add_argument("--yolo_model_path", type=str,
-    #                     default='QC/best_640_s_60e(2).pt')
-    # parser.add_argument("--svm_model_path", type=str,
-    #                     default='QC/mobilenetv3_small_075_yl_241222(3).pth',
-    #                     help="MobileNet (SVM) 路径")
     parser.add_argument("--yolo_model_path", type=str,
-                        default=os.path.join(_VJEPA_ROOT, 'runs/detect/distill-640-new/train/weights/epoch30.pt'))
+                        default='distill/det/output/ckpts/best_finetune_distilled.pt'))
     parser.add_argument("--svm_model_path", type=str,
-                        default=os.path.join(_VJEPA_ROOT, 'distill/cls/output/ft-distill-0525/best_finetune_9828.pt'),
+                        default='distill/cls/output/ckpts/distilled.pt',
                         help="MobileNet (SVM) 路径")
 
     # --- 硬件参数 ---

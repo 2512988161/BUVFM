@@ -4,7 +4,7 @@ import tempfile
 import cv2
 import imageio.v3 as iio
 import numpy as np
-import timm
+
 import torch
 import torch.nn.functional as F
 from decord import VideoReader, cpu
@@ -12,6 +12,7 @@ from PIL import Image
 from torchvision import transforms
 
 from buildmodel import build_model
+from distill.cls.buildmodel import MobileNetV3Backbone
 from utils import make_transforms
 
 
@@ -246,9 +247,9 @@ def frames_to_video_file(frames, fps=8, prefix="gradcam"):
     return path
 
 
-YOLO_MODEL_PATH = "./QC/best_640_s_60e(2).pt"
-SVM_MODEL_PATH = "./QC/mobilenetv3_small_075_yl_241222(3).pth"
-YOLO_IMG_SIZE = 256
+YOLO_MODEL_PATH = "distill/det/output/ckpts/best_finetune_distilled.pt"
+SVM_MODEL_PATH = "distill/cls/output/ckpts/distilled.pt"
+YOLO_IMG_SIZE = 640
 YOLO_EXCLUDE_CLASS = 1
 YOLO_CONF_THRESHOLD = 0.5
 BATCH_SIZE = 16
@@ -259,10 +260,12 @@ def resolve_device():
 
 
 def build_mobilenet(device):
-    model = timm.create_model("mobilenetv3_small_075", pretrained=False, in_chans=3, num_classes=2).to(device)
+    model = MobileNetV3Backbone(model_name="mobilenetv3_small_075", num_classes=2).to(device)
     if not os.path.exists(SVM_MODEL_PATH):
         raise FileNotFoundError(f"MobileNet checkpoint not found: {SVM_MODEL_PATH}")
-    model.load_state_dict(torch.load(SVM_MODEL_PATH, map_location=device))
+    ckpt = torch.load(SVM_MODEL_PATH, map_location=device)
+    state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
+    model.load_state_dict(state_dict)
     model.eval()
     return model
 
@@ -294,26 +297,24 @@ def build_stage1_preprocess():
         transforms.Resize(256),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
 
 
 def draw_mobilenet_score(frame, score):
-    valid = 1.0 - score
-    text = f"Valid {valid:.2f}"
+    text = f"MB: {score:.3f}"
+    color = (0, 255, 0) if score < 0.5 else (0, 0, 255)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    scale = 0.42
-    text_thickness = 1
-    (tw, th), baseline = cv2.getTextSize(text, font, scale, text_thickness)
-    x = frame.shape[1] - tw - 4
-    y = th + 4
+    scale = 0.8
+    text_thickness = 2
+    (tw, th), _ = cv2.getTextSize(text, font, scale, text_thickness)
     cv2.putText(
         frame,
         text,
-        (x, y),
+        (frame.shape[1] - tw - 10, th + 10),
         font,
         scale,
-        (245, 245, 245),
+        color,
         text_thickness,
         cv2.LINE_AA,
     )
@@ -350,7 +351,7 @@ def infer_stage1_batch(batch_frames, start_idx, mobilenet_model, yolo_model, pre
     mobilenet_tensors = torch.stack([preprocess(img) for img in imgs_pil]).to(mobilenet_device)
 
     with torch.inference_mode():
-        logits = mobilenet_model(mobilenet_tensors)
+        logits = mobilenet_model.forward_full(mobilenet_tensors)
         probs = F.softmax(logits, dim=1)
         mobilenet_scores = probs[:, 1].cpu().tolist()
 
