@@ -5,7 +5,7 @@ torchvision>=0.15.0
 decord
 opencv-python
 imageio[ffmpeg]
-timm
+t.4.12imm==0
 ultralytics
 pillow
 numpy

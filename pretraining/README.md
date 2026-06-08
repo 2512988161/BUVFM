@@ -42,31 +42,6 @@ pretraining/
 └── VideoMAEv2/                      # 原始 VideoMAEv2 参考实现
 ```
 
-## 架构
-
-### Encoder: VJEPA `vit_giant_xformers`
-- 1408-dim, 40 layers, 22 heads, RoPE + SwiGLU FFN (mlp_ratio=48/11)
-- `PatchEmbed3D` (tubelet=2, patch=16) → 1568 tokens from [16, 224, 224]
-- 无位置编码（RoPE 内置于 attention）
-- `VJEPAEncoder` 适配层：布尔 mask `[B, N]` → 索引 mask → `VisionTransformer.forward(x, masks=[ids_keep])`
-- Gradient checkpointing 应用于所有 block
-
-### Decoder: 浅层 Transformer
-- 512-dim, 4 layers, 8 heads, standard attention (无 RoPE), GELU MLP
-- 使用 VJEPA 的 `Block` (`src/models/utils/modules.py`) with `use_rope=False`
-- 可学习的 mask token + sincos 位置编码
-- 输出 head: 512 → 1536 (3 × 2 × 16² pixels per tubelet-patch)
-
-### Masking 策略（VideoMAEv2 核心创新）
-- **Encoder**: Tube masking (90%) — 同一随机空间 mask 应用于所有帧，形成时空"管道"
-- **Decoder**: Running-cell masking (50%) — 2×2 cell 模式逐帧滑动，增加重建难度
-- **Loss**: Per-patch normalized MSE，仅在 encoder-masked AND decoder-visible 的位置计算
-
-### Checkpoint 兼容性
-- 模型 state dict key 格式: `encoder.vit.patch_embed.proj.weight`, `encoder.vit.blocks.0.norm1.weight`
-- `convert_checkpoint.py` 自动剥离 `encoder.vit.` 前缀 → `{"encoder": {...}, "classifiers": []}`
-- 可直接通过 `buildmodel.build_model()` 加载
-
 ## 使用方法
 
 ### 1. 准备数据
@@ -123,40 +98,6 @@ model, classifier = build_model(
 )
 ```
 
-## 关键参数 (ViT-g)
-
-| 参数 | 值 | 说明 |
-|------|------|------|
-| batch_size | 4 (per GPU) | |
-| epochs | 300 | |
-| lr | 6e-4 | 线性缩放前 |
-| warmup_epochs | 30 | |
-| min_lr | 1e-5 | |
-| warmup_lr | 1e-6 | |
-| opt | adamw | β=(0.9, 0.95), eps=1e-8 |
-| weight_decay | 0.05 | |
-| clip_grad | 0.02 | Giant 专用 |
-| mask_ratio | 0.90 | Encoder tube masking |
-| decoder_mask_ratio | 0.50 | Decoder running-cell masking |
-| decoder_depth | 4 | |
-| num_frames | 16 | 每 clip 帧数 |
-| sampling_rate | 4 | 帧间隔 (跨 64 帧) |
-| num_sample | 4 | 重复增强样本数 |
-| input_size | 224 | |
-| tubelet_size | 2 | |
-| with_checkpoint | True | Gradient checkpointing |
-| normlize_target | True | Per-patch normalization |
-| LR 缩放 | lr × total_batch / 256 | |
-
-## 验证结果
-
-| 测试 | 结果 |
-|------|------|
-| Mask 生成器 | `(8, 196)`, masked ratios: 0.898 / 0.500 |
-| 模型前向 | 1026.3M params, output `[2, 784, 1536]` |
-| Encoder state dict | 484 `encoder.vit.*` keys |
-| build_model 加载 | "All keys matched successfully" |
-| 端到端推理 | Encoder `[1, 1568, 1408]` → Classifier `[1, 3]` |
 
 ## VideoVAEPlus 预训练
 
@@ -174,30 +115,6 @@ pretraining/
 │   └── vae_utils.py                   # 复用 mae_utils 的工具函数
 └── VideoVAEPlus/                      # 原始 VideoVAEPlus 参考实现
 ```
-
-### 架构
-
-**Encoder:** 2+1D 卷积网络 (Encoder2plus1D)
-- ch=128, ch_mult=[1,2,4,4], 2 个 ResNet block，无 spatial attention
-- 输入 [B,3,T,H,W] → [B, 2*z_channels, T, H/16, W/16]
-- 中间层: AttnBlock3D + TemporalAttention (相对位置编码)
-
-**Temporal Compression:** 1D CNN (EncoderTemporal1DCNN / DecoderTemporal1DCNN)
-- temporal_scale_factor=4: 将 T 帧压缩为 T/4 个 latent 帧
-- hidden_channel=128, 通过 stride-2 3D convs 实现 2 级下采样
-
-**Decoder:** 2+1D 卷积网络 (Decoder2plus1D)
-- 对称上采样 + TemporalAttention
-
-**Loss:** L1 + LPIPS + KL + 3D PatchGAN 判别器
-- `disc_start=50001`: 前 50k 步仅使用重建损失
-- `kl_weight=1e-6`, `disc_weight=0.5`
-
-### Checkpoint 兼容性
-
-- `convert_checkpoint.py --method vae` 提取 `encoder.*`, `quant_conv.*`, `encoder_temporal.*` 键
-- 输出 `{"encoder": {...}, "classifiers": []}` 格式
-- `buildmodel.py` 自动检测 VAE 检查点并构建 VAEEncoderWrapper
 
 ### 使用方法
 
@@ -217,27 +134,6 @@ model, classifier = build_model(
     resolution=224, frames_per_clip=16, num_classes=3
 )
 ```
-
-### 关键参数 (VAE 4z)
-
-| 参数 | 值 | 说明 |
-|------|------|------|
-| batch_size | 2 (per GPU) | |
-| epochs | 100 | |
-| lr | 4.5e-6 | 线性缩放前 |
-| warmup_epochs | 5 | |
-| opt | adamw | β=(0.5, 0.9), eps=1e-8 |
-| clip_grad | 0.02 | |
-| embed_dim | 4 | VAE latent 维度 |
-| z_channels | 4 | 编码器中间通道数 |
-| temporal_scale_factor | 4 | 时间压缩倍率 (16→4) |
-| disc_start | 50001 | 判别器启动步数 |
-| kl_weight | 1e-6 | KL 散度权重 |
-| disc_weight | 0.5 | 判别器损失权重 |
-| num_frames | 16 | 每 clip 帧数 |
-| sampling_rate | 4 | 帧间隔 |
-| input_size | 224 | 空间分辨率 |
-| LR 缩放 | lr × total_batch / 256 | |
 
 ## 参考
 

@@ -57,6 +57,7 @@ yolo26n.pt
 yolo11m.pt
 runs/
 .claude/
+graphify-out/
 
 # Large files
 # *.pt

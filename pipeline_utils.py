@@ -13,9 +13,19 @@ from buildmodel import build_model
 from distill.quality_con import build_mobilenet_svm, get_svm_preprocess
 from utils import make_transforms
 
-YOLO_IMG_SIZE = 640
+
 YOLO_EXCLUDE_CLASS = 1
 YOLO_CONF_THRESHOLD = 0.5
+BATCH_SIZE = 16
+
+# YOLO_IMG_SIZE = 256
+# YOLO_MODEL_PATH = "ckpts/best_640_s_60e(2).pt"
+# SVM_MODEL_PATH = "ckpts/mobilenetv3_small_075_yl_241222(3).pth"
+
+YOLO_IMG_SIZE = 640
+YOLO_MODEL_PATH = "distill/det/output/ckpts/distilled.pt"
+SVM_MODEL_PATH = "distill/cls/output/ckpts/best_finetune_distilled.pt"
+
 
 
 # ---------------------------------------------------------------------------
@@ -249,12 +259,7 @@ def frames_to_video_file(frames, fps=8, prefix="gradcam"):
     return path
 
 
-YOLO_MODEL_PATH = "distill/det/output/ckpts/distilled.pt"
-SVM_MODEL_PATH = "distill/cls/output/ckpts/best_finetune_distilled.pt"
 
-YOLO_EXCLUDE_CLASS = 1
-YOLO_CONF_THRESHOLD = 0.5
-BATCH_SIZE = 16
 
 
 def resolve_device():
