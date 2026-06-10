@@ -5,14 +5,14 @@ torchvision>=0.15.0
 decord
 opencv-python
 imageio[ffmpeg]
-t.4.12imm==0
+timm==0.4.12
 ultralytics
 pillow
 numpy
 scikit-learn
 pandas
 tqdm
-huggingface_hub
+huggingface-hub
 einops
 tensorboardX
 matplotlib

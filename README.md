@@ -2,6 +2,7 @@
 <h1>BUVFM — Breast Ultrasound Video Foundation Model</h1>
 <!-- <a href="http://arxiv.org/abs/2509.11752"><img src='https://img.shields.io/badge/arXiv-Preprint-red' alt='Paper PDF'></a> -->
 <a href='https://huggingface.co/xenosscu/BUVFM'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Weights-blue'></a>
+<a href='https://huggingface.co/datasets/xenosscu/BUVFM'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Dataset-yellow'></a>
 <a href='https://2512988161.github.io/nmODE-V-pp/'><img src='https://img.shields.io/badge/Homepage-green' alt='Homepage'></a>
 <a href='http://buvfm.machineilab.org/'><img src='https://img.shields.io/badge/Demopage-blue' alt='Demopage'></a>
 <a href='https://github.com/2512988161/BUVFM'><img src='https://img.shields.io/badge/Github-red' alt='Github'></a>
@@ -11,6 +12,7 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 
 ## Table of Contents
 
+- [System Requirements](#system-requirements)
 - [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
 - [Dataset Preparation](#dataset-preparation)
@@ -19,8 +21,8 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [Training](#training)
 - [Knowledge Distillation](#knowledge-distillation)
 - [Inference & Evaluation](#inference--evaluation)
-- [Demo Applications](#demo-applications)
-- [Results](#results)
+- [Demo](#demo)
+- [Reproduction](#reproduction)
 - [License](#license)
 
 ## Roadmap
@@ -36,21 +38,95 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [ ] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
 - [x] **Knowledge distillation** — Distill the ViT-Giant model to smaller architectures for efficient deployment.
 
+## System Requirements
+
+### Operating System
+| Item | Version |
+|------|---------|
+| OS | Ubuntu 22.04.5 LTS (Jammy Jellyfish) |
+| Kernel | 6.14.0-37-generic |
+| Architecture | x86_64 |
+
+### Hardware
+
+#### Minimum
+| Component | Specification |
+|-----------|---------------|
+| CPU | 8-core x86_64 processor |
+| RAM | 32 GB |
+| GPU | 1× NVIDIA GPU with 24 GB VRAM (e.g., RTX 4090) |
+
+#### Recommended (this configuration)
+| Component | Specification |
+|-----------|---------------|
+| CPU | Intel Xeon Platinum 8568Y+ (192 cores) |
+| RAM | 125 GB |
+| GPU | 4× NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB VRAM each) |
+
+### GPU & CUDA
+| Item | Version |
+|------|---------|
+| GPU Driver | 570.153.02 |
+| CUDA | 12.8 |
+| cuDNN | Compatible with CUDA 12.x |
+
+### Software Dependencies
+| Package | Version |
+|---------|---------|
+| Python | 3.10.9 |
+
+For all Python package dependencies, see [requirements.txt](requirements.txt).
+
+### Tested Versions
+| Item | Tested Version |
+|------|----------------|
+| Ubuntu | 22.04.5 LTS |
+| Linux Kernel | 6.14.0-37-generic |
+| Python | 3.10.9 |
+| CUDA | 12.8 |
+| GPU Driver | 570.153.02 |
+| GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB) |
+| PyTorch | ≥ 2.0.0 |
+
 ## Quick Start
 
 ### 1. Install dependencies
 
 ```bash
+conda create -n buvfm python=3.10.9 -y
+conda activate buvfm
 pip install -r requirements.txt
 ```
 
-### 2. Download checkpoints
+> **Typical install time**: ~5–10 minutes on a normal desktop computer with broadband internet. Model weight download time (step 2) depends on network speed; weights total approximately 20.9 GB.
+
+### 2. Download demo datasets & checkpoints
 
 ```bash
-python download_ckpt.py
+HF_TOKEN=/your/hugging/face/token python download_dataset_ckpt.py
 ```
 
-Downloads pretrained weights, fine-tuned checkpoints, and QC models from [Hugging Face Hub](https://huggingface.co/xenosscu/BUVFM) to `./ckpts/` and `./QC/`.
+Downloads all demo datasets to `./dataset/` and all model weights to `./` from [xenosscu/BUVFM](https://huggingface.co/xenosscu/BUVFM) on Hugging Face Hub.
+
+#### Datasets
+
+| Name | Save Path | Description |
+|------|-----------|-------------|
+| `orilong` | `dataset/orilong/` | Original long ultrasound videos |
+| `videos_train` | `dataset/videos_train/` | Training set (ImageFolder: `class_0/1/2/`) |
+| `videos_val` | `dataset/videos_val/` | Validation set (ImageFolder: `class_0/1/2/`) |
+
+#### Checkpoints
+
+| Name | Save Path | Description |
+|------|-----------|-------------|
+| `vjepa-nmode-pretrain.pt` | `ckpts/vjepa-nmode-pretrain.pt` | Pretrained backbone (standard fine-tuning start point) |
+| `best_vjepa_model9639(paper).pt` | `ckpts/vjepa_full/best_vjepa_model9639(paper).pt` | Paper-reported fine-tuned ViT-Giant checkpoint |
+| `best_distill.pt` | `distill/cls/output/ckpts/best_distill.pt` | Classification distillation — feature alignment (Stage 1) |
+| `best_finetune_distilled.pt` | `distill/cls/output/ckpts/best_finetune_distilled.pt` | Classification distillation — fine-tuned from distilled (Stage 2) |
+| `best_finetune_scratch.pt` | `distill/cls/output/ckpts/best_finetune_scratch.pt` | Classification distillation — fine-tuned from scratch baseline |
+| `distilled.pt` | `distill/det/output/ckpts/distilled.pt` | Detection distillation — YOLO feature alignment (Stage 1) |
+| `ft-scratch.pt` | `distill/det/output/ckpts/ft-scratch.pt` | Detection distillation — YOLO fine-tuned from scratch baseline |
 
 ### 3. Prepare your dataset
 
@@ -104,7 +180,7 @@ See [Inference & Evaluation](#inference--evaluation) for more options.
 
 ```
 BUVFM/
-├── download_ckpt.py           # Download all model weights from Hugging Face Hub
+├── download_dataset_ckpt.py    # Download all datasets & model weights from Hugging Face Hub
 ├── train.py                  # Fine-tuning script
 ├── inference_ddp_old.py      # Multi-GPU distributed inference 
 ├── test.py                   # Arbitrary-dir inference (hardcoded config)
@@ -194,15 +270,21 @@ Key dataset parameters:
 
 ## Checkpoint Preparation
 
-### Download Checkpoints from Hugging Face Hub
+### Download Datasets & Checkpoints from Hugging Face Hub
 
-Use `download_ckpt.py` to download all model weights (pretrained checkpoint, fine-tuned checkpoints, and QC models) from [xenosscu/BUVFM](https://huggingface.co/xenosscu/BUVFM) on Hugging Face Hub:
+Use `download_dataset_ckpt.py` to download all demo datasets and model weights (pretrained checkpoint, fine-tuned checkpoints, distillation checkpoints, and QC models) from [xenosscu/BUVFM](https://huggingface.co/xenosscu/BUVFM) on Hugging Face Hub:
 
 ```bash
-python download_ckpt.py
+HF_TOKEN=/your/hugging/face/token python download_dataset_ckpt.py
 ```
 
-This downloads the full model repository to the current directory, preserving the expected directory structure (`ckpts/`, `QC/`).
+This downloads datasets to `./dataset/` and model weights to `./`, preserving the expected directory structure (`ckpts/`, `distill/`, `QC/`).
+
+You can also specify custom output directories:
+
+```bash
+HF_TOKEN=... python download_dataset_ckpt.py ./my_dataset ./my_models
+```
 
 ### Pretrained Starting Point
 
@@ -328,32 +410,109 @@ Video Input → [Stage 1: Screening] → [Stage 2: Risk Grading]
           No lesions? → STOP           3-class probs + Grad-CAM
 ```
 
-#### Running the Demo
+Pipeline logic and model interfaces (MobileNetV3, YOLO, VJEPA2, Grad-CAM) are in `pipeline_utils.py`.
+
+#### Running Locally
 
 ```bash
-pip install gradio plotly timm ultralytics
+conda activate buvfm
 python app.py
 ```
 
-Open http://localhost:9530 in your browser, or visit the online demo at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/). Upload a video or click an example (16 videos across 4 categories: Class 0 / Class NO / Class 1 / Class 2). The model is loaded on the first pipeline run.
+Open http://localhost:9530 in your browser. Upload a video or click an example from `assets/` (16 videos across 4 categories: Class 0 / Class NO / Class 1 / Class 2). The model is loaded on the first pipeline run.
 
-Pipeline logic and model interfaces (MobileNetV3, YOLO, VJEPA2, Grad-CAM) are in `pipeline_utils.py`.
-
-### Hugging Face Space
-The Gradio demo in this repository is deployed at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
-
-#### Local run
-```bash
-pip install gradio plotly timm ultralytics
-pip install -r requirements.txt
-CUDA_VISIBLE_DEVICES=1 python app.py
-```
 Optional environment variables:
+
 ```bash
 export BUVFM_CHECKPOINT_PATH=/absolute/path/to/checkpoint.pt
 export BUVFM_ASSETS_DIR=/absolute/path/to/assets
 export BUVFM_MAX_FILE_SIZE_MB=100
 ```
 
+#### Expected Output
+
+The demo displays results in a Gradio web UI with two stages:
+
+1. **Stage 1 (Screening)**: Frame-level lesion detection with YOLO bounding boxes and MobileNetV3 classification. Videos with no detected lesions are flagged and the pipeline stops.
+2. **Stage 2 (Risk Grading)**: 3-class BI-RADS risk probabilities (Class 0 / Class 1 / Class 2) with Grad-CAM heatmap overlays highlighting diagnostically relevant regions.
+
+Example inference results are saved to `./output/` as CSV files with per-video predictions and confidence scores.
+
+#### Expected Run Time
+
+| Scenario | Time |
+|----------|------|
+| Model loading (first run, cold start) | ~10–30 seconds |
+| Per-video inference (2-stage pipeline) | ~5–15 seconds |
+| Total (load + 1 example video) | ~30–60 seconds |
+
+*Times measured on a desktop with NVIDIA RTX 4090 (24 GB VRAM). On CPU-only machines the demo will run significantly slower and is not recommended for production use.*
+
+### Online Demo
+
+A hosted Gradio demo is available at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
+
+## Reproduction
+
+To reproduce the quantitative results reported in the manuscript:
+
+### 1. Prepare Environment & Data
+
+```bash
+conda create -n buvfm python=3.10.9 -y
+conda activate buvfm
+pip install -r requirements.txt
+HF_TOKEN=/your/hugging/face/token python download_dataset_ckpt.py
+```
+
+Organize your dataset following the [Dataset Preparation](#dataset-preparation) structure.
+
+### 2. Fine-Tune
+
+```bash
+torchrun --nproc_per_node=4 train.py \
+    --pretrained_ckpt ./ckpts/vjepa-nmode-pretrain.pt \
+    --train_dir /path/to/dataset/train \
+    --val_dir /path/to/dataset/val \
+    --batch_size 16 \
+    --lr 5e-5 \
+    --epochs 50
+```
+
+Checkpoints are saved to `./ckpts/vjepa_full/best_vjepa_model.pt`. Logs are written to `./output/logs_vjepa/vjepa_full.log`.
+
+### 3. Evaluate
+
+```bash
+torchrun --master_port=29599 --nproc_per_node=4 inference_ddp_old.py \
+    --val_dir /path/to/dataset/val \
+    --checkpoint ./ckpts/vjepa_full/best_vjepa_model.pt \
+    --output ./output/results.csv \
+    --frame_step 2 --frames_per_clip 16
+```
+
+Per-video predictions and confidence scores are written to the output CSV.
+
+### 4. Robustness Evaluation (Speckle Noise)
+
+```bash
+torchrun --master_port=29599 --nproc_per_node=4 inference_ddp_old.py \
+    --val_dir /path/to/dataset/val \
+    --checkpoint ./ckpts/vjepa_full/best_vjepa_model.pt \
+    --output ./output/robustness.csv \
+    --restore_true
+```
+
+This evaluates across speckle noise ratios from 0.05 to 0.95.
+
+### 5. Visualization (t-SNE / PCA)
+
+```bash
+python cluster_videos_nocohen.py
+```
+
+Edit `checkpoint_path` and `val_dir` inside the script before running.
+
 ## License
-Licensed under the MIT License.
+
+This model and associated code are released under the [CC-BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) license and may only be used for non-commercial, academic research purposes with proper attribution. Any commercial use, sale, or other monetization of the BUVFM model and its derivatives, which include models trained on outputs from the BUVFM model or datasets created from the BUVFM model, is prohibited and requires prior approval.
