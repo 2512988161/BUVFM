@@ -1,0 +1,62 @@
+cpus_per_task: 16
+mem_per_gpu: 90G
+nodes: 1
+tasks_per_node: 4
+num_workers: 8
+eval_name: video_classification_frozen # actually, video_classification_finetuned
+folder: outputs/{model}/finetune
+tag: ultrasound_vjepa2_ALL_finetune
+resume_checkpoint: true
+
+experiment:
+  classifier:
+    num_heads: 16
+    num_probe_blocks: 1         # 4 -> 1
+  data:
+    dataset_type: VideoDataset
+    dataset_train: configs/{model}/train.csv
+    dataset_val: configs/{model}/val.csv
+    num_classes: 3
+    resolution: 224
+    
+    frames_per_clip: 16
+    frame_step: 2
+    num_segments: 1
+    num_views_per_segment: 1
+
+    
+  optimization:
+    use_pos_embed: false
+    num_epochs: 20
+    batch_size: 16
+    use_bfloat16: true
+    layer_decay: 0.90
+    
+
+    multihead_kwargs:
+    - final_lr: 1.0e-06
+      final_weight_decay: 0.05
+      lr: 5.0e-05
+      start_lr: 5.0e-06
+      warmup: 2
+      weight_decay: 0.05
+
+model_kwargs:
+  checkpoint: outputs/{model}/pretrain/latest.pt
+  
+  module_name: evals.video_classification_frozen.modelcustom.vit_encoder_multiclip_multilevel
+  
+  pretrain_kwargs:
+    encoder:
+      checkpoint_key: target_encoder
+      img_temporal_dim_size: null
+      model_name: vit_giant_xformers
+      patch_size: 16
+      tubelet_size: 2
+      uniform_power: true
+      use_rope: true
+      
+  wrapper_kwargs:
+    max_frames: 16
+    use_pos_embed: false
+    out_layers: [39]

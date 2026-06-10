@@ -48,13 +48,18 @@ vis.py
 distill/cls/output/
 distill/det/output/
 
+pretraining/output/
+pretraining/configs/vitg/*
+pretraining/configs/vith/*
+pretraining/configs/vitl/*
+
 QC/.claude/
 merge_reader_pre.py
 cm.py
 pre_infer_merge_cm.py
 CLAUDE.md
 yolo26n.pt
-yolo11m.pt
+*.pt
 runs/
 .claude/
 graphify-out/

@@ -32,10 +32,8 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [x] **QC screening pipeline** — MobileNetV3 + YOLO frame-level lesion screening and clip extraction.
 - [x] **2-Stage demo** — Gradio web app: Stage 1 (MobileNetV3+YOLO screening) → Stage 2 (VJEPA2+Grad-CAM risk grading).
 - [x] **Hugging Face Hub release** — Pretrained weights, fine-tuned checkpoints, and QC models on [Hugging Face](https://huggingface.co/xenosscu/BUVFM).
-- [x] **VideoMAE (MAE)** — VideoMAEv2-style masked autoencoder with VJEPA ViT-g encoder and shallow Transformer decoder. Tube masking (90%) + running-cell masking (50%), per-patch normalized MSE loss.
-- [x] **VideoVAEPlus (VAE)** — ViT encoder → 2+1D Conv decoder with temporal compression + 3D PatchGAN discriminator. L1 + LPIPS + KL + adversarial loss.
 - [x] **Checkpoint conversion** — `pretraining/convert_checkpoint.py` converts MAE/VAE checkpoints to `build_model()`-compatible format for downstream fine-tuning.
-- [ ] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
+- [x] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
 - [x] **Knowledge distillation** — Distill the ViT-Giant model to smaller architectures for efficient deployment.
 
 ## System Requirements
@@ -120,8 +118,12 @@ Downloads all demo datasets to `./dataset/` and all model weights to `./` from [
 
 | Name | Save Path | Description |
 |------|-----------|-------------|
-| `vjepa-nmode-pretrain.pt` | `ckpts/vjepa-nmode-pretrain.pt` | Pretrained backbone (standard fine-tuning start point) |
+| `vjepa-nmode-pretrain.pt` | `ckpts/vjepa-nmode-pretrain.pt` | Pretrained ViT-Giant backbone (standard fine-tuning start point) |
+| `vjepa-nmode-pretrain-vitl.pt` | `ckpts/vjepa-nmode-pretrain-vitl.pt` | Pretrained ViT-Large backbone |
+| `vjepa-nmode-pretrain-vith.pt` | `ckpts/vjepa-nmode-pretrain-vith.pt` | Pretrained ViT-Huge backbone |
 | `best_vjepa_model9639(paper).pt` | `ckpts/vjepa_full/best_vjepa_model9639(paper).pt` | Paper-reported fine-tuned ViT-Giant checkpoint |
+| `best_vjepa_model.pt` | `ckpts/vjepa_full_vitl/best_vjepa_model.pt` | Fine-tuned ViT-Large checkpoint |
+| `best_vjepa_model.pt` | `ckpts/vjepa_full_vith/best_vjepa_model.pt` | Fine-tuned ViT-Huge checkpoint |
 | `best_distill.pt` | `distill/cls/output/ckpts/best_distill.pt` | Classification distillation — feature alignment (Stage 1) |
 | `best_finetune_distilled.pt` | `distill/cls/output/ckpts/best_finetune_distilled.pt` | Classification distillation — fine-tuned from distilled (Stage 2) |
 | `best_finetune_scratch.pt` | `distill/cls/output/ckpts/best_finetune_scratch.pt` | Classification distillation — fine-tuned from scratch baseline |
@@ -205,11 +207,26 @@ BUVFM/
 │   │       └── dataloader.py
 │   └── utils/                      # Distributed, logging, schedulers, checkpoint loader
 ├── pretraining/
-│   ├── run_pretrain_mae.py         # VideoMAEv2-style MAE pretraining entry
-│   ├── run_pretrain_vae.py         # VideoVAEPlus pretraining entry
-│   ├── convert_checkpoint.py       # Pretrain ckpt → build_model format
-│   ├── prepare_data.py             # Generate annotation files from raw videos
-│   └── methods/                    # MAE/VAE modeling, datasets, engines, masking
+│   ├── prepare.py              # Auto-generate CSVs, YAML configs, and shell scripts
+│   ├── app/                    # Pretraining entry points & VJEPA trainer
+│   │   ├── main.py             # Single-GPU pretraining entry
+│   │   ├── main_distributed.py # Multi-GPU distributed pretraining entry
+│   │   ├── scaffold.py         # Config loading & trainer construction
+│   │   ├── vjepa/              # VJEPA pretraining engine
+│   │   └── vjepa_droid/        # VJEPA-DROID pretraining engine
+│   ├── evals/                  # Fine-tuning & evaluation entry points
+│   │   ├── main.py             # Single-GPU fine-tuning entry
+│   │   ├── main_distributed.py # Multi-GPU distributed fine-tuning entry
+│   │   ├── scaffold.py         # Eval config loading
+│   │   └── video_classification_frozen/  # Frozen backbone evaluation
+│   ├── configs/                # YAML templates & per-model configs
+│   │   ├── pretrain-tample.yaml  # Pretrain config template
+│   │   ├── fintune-tample.yaml   # Fine-tune config template
+│   │   ├── vitg/               # Generated configs for ViT-Giant
+│   │   ├── vith/               # Generated configs for ViT-Huge
+│   │   └── vitl/               # Generated configs for ViT-Large
+│   ├── src/                    # Shared models, datasets, masks, utils
+│   └── tests/                  # Unit tests for models and datasets
 ├── distill/
 │   ├── README.md                   # Distillation usage guide
 │   ├── cls/                        # Classification distillation (ViT-G → MobileNetV3)
@@ -299,7 +316,7 @@ Fine-tuned checkpoints are saved under `ckpts/vjepa_full/` (or variant directori
 
 ## Pretraining
 
-See `pretraining/README.md` for full details.
+See `pretraining/README.md` .
 
 
 ## Training
