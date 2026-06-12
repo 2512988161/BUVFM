@@ -1,2 +1,9 @@
-*.pt filter=lfs diff=lfs merge=lfs -text
-*.pth filter=lfs diff=lfs merge=lfs -text
+distill/cls/output/ckpts/best_distill.pt filter=lfs diff=lfs merge=lfs -text
+distill/cls/output/ckpts/best_finetune_distilled.pt filter=lfs diff=lfs merge=lfs -text
+distill/cls/output/ckpts/best_finetune_scratch.pt filter=lfs diff=lfs merge=lfs -text
+distill/det/output/ckpts/distilled.pt filter=lfs diff=lfs merge=lfs -text
+distill/det/output/ckpts/ft-scratch.pt filter=lfs diff=lfs merge=lfs -text
+ckpts/vjepa-nmode-pretrain-vitl.pt filter=lfs diff=lfs merge=lfs -text
+ckpts/vjepa-nmode-pretrain-vith.pt filter=lfs diff=lfs merge=lfs -text
+ckpts/vjepa_full_vith/best_vjepa_model.pt filter=lfs diff=lfs merge=lfs -text
+ckpts/vjepa_full_vitl/best_vjepa_model.pt filter=lfs diff=lfs merge=lfs -text

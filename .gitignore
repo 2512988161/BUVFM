@@ -11,7 +11,8 @@ build/
 venv/
 .venv/
 env/
-
+dataset/
+model.md
 # IDE
 .vscode/
 .idea/

@@ -10,22 +10,6 @@
 
 BUVFM is the first breast ultrasound video foundation model, pretrained on 423K frames and 84K video sequences via self-supervised learning and fine-tuned for BI-RADS risk stratification. It powers AIBS, a cloud-edge system that enables non-physician ultrasound acquisition with real-time quality control, and achieves 95.42% macro sensitivity and 95.60% macro specificity across internal and 11 external cohorts.
 
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [Project Structure](#project-structure)
-- [Dataset Preparation](#dataset-preparation)
-- [Checkpoint Preparation](#checkpoint-preparation)
-- [Pretraining](#pretraining)
-- [Training](#training)
-- [Knowledge Distillation](#knowledge-distillation)
-- [Inference & Evaluation](#inference--evaluation)
-- [Demo](#demo)
-- [System Requirements](#system-requirements)
-- [Reproduction](#reproduction)
-- [License](#license)
-
-## Roadmap
 
 - [x] **VJEPA fine-tuning** — Downstream BI-RADS classification on ultrasound videos with ViT-Giant backbone.
 - [x] **Inference & evaluation** — Multi-GPU distributed inference, t-SNE/PCA visualization, speckle noise robustness testing.
@@ -36,10 +20,9 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [x] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
 - [x] **Knowledge distillation** — Distill the ViT-Giant model to smaller architectures for efficient deployment.
 
-
-
 ## Quick Start
-
+<details>
+<summary>Show/Hide</summary>
 ### 1. Install dependencies
 
 ```bash
@@ -53,7 +36,7 @@ pip install -r requirements.txt
 ### 2. Download demo datasets & checkpoints
 
 ```bash
-HF_TOKEN=/your/hugging/face/token python download_dataset_ckpt.py
+HF_TOKEN=your-huggingface-token python download_dataset_ckpt.py
 ```
 
 Downloads all demo datasets to `./dataset/` and all model weights to `./` from [xenosscu/BUVFM](https://huggingface.co/xenosscu/BUVFM) on Hugging Face Hub.
@@ -130,7 +113,11 @@ torchrun --master_port=$TRPORT --nproc_per_node=4 inference_ddp_old.py \
 See [Inference & Evaluation](#inference--evaluation) for more options.
 
 
+</details>
+
 ## Project Structure
+<details>
+<summary>Show/Hide</summary>
 
 ```
 BUVFM/
@@ -195,7 +182,12 @@ BUVFM/
 
 ```
 
+</details>
+
 ## Dataset Preparation
+<details>
+<summary>Show/Hide</summary>
+
 
 Organize videos in an `ImageFolder`-style directory structure — each subfolder named `class_N` holds videos of that class:
 
@@ -228,7 +220,11 @@ Key dataset parameters:
 
 > **Note**: `train.py` applies class-0 undersampling to handle class imbalance (capped at 10,000), and use weighted loss functions.
 
+</details>
+
 ## Checkpoint Preparation
+<details>
+<summary>Show/Hide</summary>
 
 ### Download Datasets & Checkpoints from Hugging Face Hub
 
@@ -254,11 +250,19 @@ Fine-tuning starts from `./ckpts/vjepa-nmode-pretrain.pt`. Alternative pretraine
 
 Fine-tuned checkpoints are saved under `ckpts/vjepa_full/` (or variant directories like `vjepa_full_maee1`, `vjepa_full_newval`, etc.). Naming convention: `best_vjepa_model.pt` (best by validation accuracy).
 
+</details>
+
 ## Pretraining
+<details>
+<summary>Show/Hide</summary>
 
 See `pretraining/README.md` .
 
+</details>
+
 ## Training
+<details>
+<summary>Show/Hide</summary>
 
 All training starts from a pretrained VJEPA checkpoint (`--pretrained_ckpt` is required). The standard starting point is `./ckpts/vjepa-nmode-pretrain.pt`.
 
@@ -295,11 +299,19 @@ torchrun --nproc_per_node=4 train.py \
 - **Checkpoints**: `./ckpts/vjepa_full/best_vjepa_model.pt` (best by val accuracy)
 - **Eval CSV**: `./ckpts/vjepa_full/best_vjepa_eval.csv` (per-video predictions)
 
+</details>
+
 ## Knowledge Distillation for Edge-Side Quality Control Model
+<details>
+<summary>Show/Hide</summary>
 
 See [distill/README.md](distill/README.md) for details.
 
+</details>
+
 ## Inference & Evaluation
+<details>
+<summary>Show/Hide</summary>
 
 ### Multi-GPU Distributed Inference (Primary)
 
@@ -346,7 +358,11 @@ torchrun --master_port=$TRPORT --nproc_per_node=4 test.py \
     $EXTRA --frame_step $FS --frames_per_clip $FPC
 ```
 
+</details>
+
 ## Demo
+<details>
+<summary>Show/Hide</summary>
 
 ### 2-Stage Pipeline Demo
 
@@ -402,7 +418,11 @@ Example inference results are saved to `./output/` as CSV files with per-video p
 A hosted Gradio demo is available at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
 
 
+</details>
+
 ## System Requirements
+<details>
+<summary>Show/Hide</summary>
 
 ### Operating System
 | Item | Version |
@@ -452,7 +472,11 @@ For all Python package dependencies, see [requirements.txt](requirements.txt).
 | GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB) |
 | PyTorch | ≥ 2.0.0 |
 
+</details>
+
 ## Reproduction
+<details>
+<summary>Show/Hide</summary>
 
 To reproduce the quantitative results reported in the manuscript:
 
@@ -513,6 +537,12 @@ python cluster_videos_nocohen.py
 
 Edit `checkpoint_path` and `val_dir` inside the script before running.
 
+</details>
+
 ## License
+<details>
+<summary>Show/Hide</summary>
 
 This model and associated code are released under the [CC-BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) license and may only be used for non-commercial, academic research purposes with proper attribution. Any commercial use, sale, or other monetization of the BUVFM model and its derivatives, which include models trained on outputs from the BUVFM model or datasets created from the BUVFM model, is prohibited and requires prior approval.
+
+</details>
