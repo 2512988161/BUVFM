@@ -257,60 +257,140 @@ class CombinedInferenceDataset(VideoFolderDataset):
 class SimpleVideoDataset(Dataset):
     """
     专门用于推理的 Dataset：递归扫描目录下所有 mp4，不要求 class_ 命名
+    帧采样逻辑与 VideoFolderDataset 完全一致
     """
-    def __init__(self, root_dir, frames_per_clip=16, frame_step=2, num_clips=1, transform=None):
+    def __init__(
+        self,
+        root_dir,
+        frames_per_clip=16,
+        frame_step=2,
+        num_clips=1,
+        transform=None,
+        shared_transform=None,
+        random_clip_sampling=False,
+        allow_clip_overlap=False,
+        filter_short_videos=False,
+        filter_long_videos=int(10**9),
+    ):
         self.root_dir = root_dir
         self.frames_per_clip = frames_per_clip
         self.frame_step = frame_step
         self.num_clips = num_clips
         self.transform = transform
-        
+        self.shared_transform = shared_transform
+        self.random_clip_sampling = random_clip_sampling
+        self.allow_clip_overlap = allow_clip_overlap
+        self.filter_short_videos = filter_short_videos
+        self.filter_long_videos = filter_long_videos
+
         self.samples = []
         for root, _, fnames in os.walk(root_dir):
-            for fname in fnames:
-                if fname.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+            for fname in sorted(fnames):
+                if fname.lower().endswith('.mp4'):
                     self.samples.append(os.path.join(root, fname))
-        
+
         if not self.samples:
             print(f"警告: 在 {root_dir} 中没找到任何视频文件！")
+        else:
+            print(f"=> Found {len(self.samples)} videos (recursive scan in {root_dir}).")
 
     def __len__(self):
         return len(self.samples)
 
-    def loadvideo_decord(self, sample):
+    def loadvideo_decord(self, sample, fpc):
+        """与 VideoFolderDataset 完全一致的 Decord 读取逻辑"""
+        fname = sample
+        if not os.path.exists(fname):
+            warnings.warn(f"video path not found {fname=}")
+            return [], None
+
+        _fsize = os.path.getsize(fname)
+        if _fsize > self.filter_long_videos:
+            warnings.warn(f"skipping long video of size {_fsize=} (bytes)")
+            return [], None
+
         try:
-            vr = VideoReader(sample, num_threads=-1, ctx=cpu(0))
-            if len(vr) < self.frames_per_clip * self.frame_step:
-                # 视频太短，简单处理：直接采样前几帧
-                indices = np.linspace(0, len(vr) - 1, num=self.frames_per_clip).astype(np.int64)
+            vr = VideoReader(fname, num_threads=-1, ctx=cpu(0))
+        except Exception:
+            return [], None
+
+        fstp = self.frame_step
+        assert fstp is not None and fstp > 0
+        clip_len = int(fpc * fstp)
+
+        if self.filter_short_videos and len(vr) < clip_len:
+            warnings.warn(f"skipping short video of length {len(vr)}")
+            return [], None
+
+        vr.seek(0)
+        partition_len = len(vr) // self.num_clips
+
+        all_indices, clip_indices = [], []
+        for i in range(self.num_clips):
+            if partition_len > clip_len:
+                end_indx = clip_len
+                if self.random_clip_sampling:
+                    end_indx = np.random.randint(clip_len, partition_len)
+                start_indx = end_indx - clip_len
+                indices = np.linspace(start_indx, end_indx, num=fpc)
+                indices = np.clip(indices, start_indx, end_indx - 1).astype(np.int64)
+                indices = indices + i * partition_len
             else:
-                # 采样中间段落
-                clip_len = self.frames_per_clip * self.frame_step
-                start_idx = (len(vr) - clip_len) // 2
-                indices = np.arange(start_idx, start_idx + clip_len, self.frame_step)[:self.frames_per_clip]
-            
-            buffer = vr.get_batch(indices).asnumpy()
-            return buffer
-        except Exception as e:
-            print(f"读取失败 {sample}: {e}")
-            return None
+                if not self.allow_clip_overlap:
+                    indices = np.linspace(0, partition_len, num=partition_len // fstp)
+                    indices = np.concatenate((indices, np.ones(fpc - partition_len // fstp) * partition_len))
+                    indices = np.clip(indices, 0, partition_len - 1).astype(np.int64)
+                    indices = indices + i * partition_len
+                else:
+                    sample_len = min(clip_len, len(vr)) - 1
+                    indices = np.linspace(0, sample_len, num=sample_len // fstp)
+                    indices = np.concatenate((indices, np.ones(fpc - sample_len // fstp) * sample_len))
+                    indices = np.clip(indices, 0, sample_len - 1).astype(np.int64)
+                    clip_step = 0
+                    if len(vr) > clip_len:
+                        clip_step = (len(vr) - clip_len) // (self.num_clips - 1)
+                    indices = indices + i * clip_step
+
+            clip_indices.append(indices)
+            all_indices.extend(list(indices))
+
+        buffer = vr.get_batch(all_indices).asnumpy()
+        return buffer, clip_indices
 
     def __getitem__(self, index):
-        path = self.samples[index]
-        buffer = self.loadvideo_decord(path)
-        
-        if buffer is None:
-            # 如果读取失败，返回一个全零 Tensor 占位，后面逻辑会处理
-            return torch.zeros(self.num_clips, 3, self.frames_per_clip, 224, 224), path, False
+        sample = self.samples[index]
+        loaded_sample = False
 
-        # Transform 处理
-        # 注意：此处假设 num_clips=1, 仿照你原有的 split_into_clips 逻辑
-        if self.transform:
-            # 这里的 transform 通常期望 [T, H, W, C]
-            # 为了适配 make_transforms，我们将 buffer 包装成 list
-            processed_clips = [self.transform(buffer)] 
-            
-        return processed_clips, path, True
+        while not loaded_sample:
+            loaded_sample = self.get_item_video(index)
+            if not loaded_sample:
+                index = np.random.randint(self.__len__())
+                sample = self.samples[index]
+
+        return loaded_sample
+
+    def get_item_video(self, index):
+        sample = self.samples[index]
+
+        buffer, clip_indices = self.loadvideo_decord(sample, self.frames_per_clip)
+        loaded_video = len(buffer) > 0
+        if not loaded_video:
+            return None
+
+        def split_into_clips(video):
+            fpc = self.frames_per_clip
+            nc = self.num_clips
+            return [video[i * fpc : (i + 1) * fpc] for i in range(nc)]
+
+        if self.shared_transform is not None:
+            buffer = self.shared_transform(buffer)
+
+        buffer = split_into_clips(buffer)
+
+        if self.transform is not None:
+            buffer = [self.transform(clip) for clip in buffer]
+
+        return buffer, sample
 
 def make_inference_dataloader(root_path, batch_size, world_size, rank, **kwargs):
     """

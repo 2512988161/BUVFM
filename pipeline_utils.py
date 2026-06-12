@@ -10,10 +10,10 @@ from decord import VideoReader, cpu
 from PIL import Image
 
 from buildmodel import build_model
-from distill.quality_con import build_mobilenet_svm, get_svm_preprocess
+from distill.quality_con import get_svm_preprocess
 from utils import make_transforms
 
-
+import timm 
 YOLO_EXCLUDE_CLASS = 1
 YOLO_CONF_THRESHOLD = 0.5
 BATCH_SIZE = 16
@@ -275,7 +275,12 @@ def build_yolo(device):
 
 
 def load_stage1_models(device):
-    mobilenet_model = build_mobilenet_svm(SVM_MODEL_PATH, device=device)
+    
+    pretrain_model = "mobilenetv3_small_075"
+    mobilenet_model = timm.create_model(pretrain_model, pretrained=False, in_chans=3, num_classes=2).to(device)
+    mobilenet_model.load_state_dict(torch.load(SVM_MODEL_PATH, map_location=device))
+    mobilenet_model.eval()
+
     try:
         yolo_model = build_yolo(device)
         yolo_device = device
@@ -344,7 +349,7 @@ def infer_stage1_batch(batch_frames, start_idx, mobilenet_model, yolo_model, pre
     mobilenet_tensors = torch.stack([preprocess(img) for img in imgs_pil]).to(mobilenet_device)
 
     with torch.inference_mode():
-        logits = mobilenet_model.forward_full(mobilenet_tensors)
+        logits = mobilenet_model(mobilenet_tensors)
         probs = F.softmax(logits, dim=1)
         mobilenet_scores = probs[:, 1].cpu().tolist()
 

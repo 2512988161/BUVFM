@@ -29,6 +29,43 @@ if _VJEPA_ROOT not in sys.path:
 from distill.cls.buildmodel import MobileNetV3Backbone, load_distilled_backbone
 
 
+def backbone_to_timm_state_dict(backbone: MobileNetV3Backbone) -> dict:
+    """
+    Convert MobileNetV3Backbone state_dict keys back to timm-native format.
+
+    MobileNetV3Backbone splits timm's `blocks` into `blocks_early` and
+    `blocks_late`; this function re-maps them so the result can be loaded
+    directly by `timm.create_model(...).load_state_dict(...)`.
+    """
+    sd = backbone.state_dict()
+    n_early = len(backbone.blocks_early)
+
+    # Detect whether blocks_late keys start from 0 (re-indexed nn.Sequential)
+    # or from n_early (preserved original indices, e.g. nn.ModuleList).
+    late_first_idx = None
+    for k in sd:
+        if k.startswith('blocks_late.'):
+            late_first_idx = int(k.split('.')[1])
+            break
+    # If blocks_late.0 exists → re-indexed, need to add n_early.
+    # If blocks_late.n_early exists → preserved, add nothing.
+    late_offset = 0 if (late_first_idx is not None and late_first_idx > 0) else n_early
+
+    remapped = {}
+    for k, v in sd.items():
+        if k.startswith('blocks_early.'):
+            rest = k[len('blocks_early.'):]
+            remapped[f'blocks.{rest}'] = v
+        elif k.startswith('blocks_late.'):
+            rest = k[len('blocks_late.'):]
+            dot = rest.index('.')
+            idx = int(rest[:dot]) + late_offset
+            remapped[f'blocks.{idx}{rest[dot:]}'] = v
+        else:
+            remapped[k] = v
+    return remapped
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -283,21 +320,16 @@ def main():
             if val_acc > best_acc:
                 best_acc = val_acc
                 acc_str = f'{best_acc:.2f}'.replace('.', '')
-                torch.save({
-                    'model_state_dict': model.module.state_dict(),
-                    'epoch': epoch,
-                    'val_acc': val_acc,
-                    'meta': meta,
-                }, os.path.join(output_dir, f'best_finetune_{acc_str}.pt'))
+                save_path = os.path.join(output_dir, f'best_finetune_{acc_str}.pt')
+                # Save raw timm-compatible state_dict so it can be loaded by:
+                #   timm.create_model(...).load_state_dict(torch.load(path))
+                torch.save(backbone_to_timm_state_dict(model.module), save_path)
                 logger.info(f'  → Saved best model ({best_acc:.2f}%)')
 
             # Periodic
             if (epoch + 1) % 20 == 0:
-                torch.save({
-                    'model_state_dict': model.module.state_dict(),
-                    'epoch': epoch,
-                    'val_acc': val_acc,
-                }, os.path.join(output_dir, f'checkpoint_epoch_{epoch+1:03d}.pt'))
+                save_path = os.path.join(output_dir, f'checkpoint_epoch_{epoch+1:03d}.pt')
+                torch.save(backbone_to_timm_state_dict(model.module), save_path)
 
     dist.destroy_process_group()
 

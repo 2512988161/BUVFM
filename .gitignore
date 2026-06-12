@@ -48,7 +48,7 @@ vis.py
 distill/cls/output/
 distill/det/output/
 
-pretraining/output/
+pretraining/outputs/
 pretraining/configs/vitg/*
 pretraining/configs/vith/*
 pretraining/configs/vitl/*

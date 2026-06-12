@@ -12,7 +12,6 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 
 ## Table of Contents
 
-- [System Requirements](#system-requirements)
 - [Quick Start](#quick-start)
 - [Project Structure](#project-structure)
 - [Dataset Preparation](#dataset-preparation)
@@ -22,6 +21,7 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [Knowledge Distillation](#knowledge-distillation)
 - [Inference & Evaluation](#inference--evaluation)
 - [Demo](#demo)
+- [System Requirements](#system-requirements)
 - [Reproduction](#reproduction)
 - [License](#license)
 
@@ -36,55 +36,7 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 - [x] **BUVFM pretraining** — Pretrain a unified BUVFM foundation model on large-scale ultrasound video data.
 - [x] **Knowledge distillation** — Distill the ViT-Giant model to smaller architectures for efficient deployment.
 
-## System Requirements
 
-### Operating System
-| Item | Version |
-|------|---------|
-| OS | Ubuntu 22.04.5 LTS (Jammy Jellyfish) |
-| Kernel | 6.14.0-37-generic |
-| Architecture | x86_64 |
-
-### Hardware
-
-#### Minimum
-| Component | Specification |
-|-----------|---------------|
-| CPU | 8-core x86_64 processor |
-| RAM | 32 GB |
-| GPU | 1× NVIDIA GPU with 24 GB VRAM (e.g., RTX 4090) |
-
-#### Recommended (this configuration)
-| Component | Specification |
-|-----------|---------------|
-| CPU | Intel Xeon Platinum 8568Y+ (192 cores) |
-| RAM | 125 GB |
-| GPU | 4× NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB VRAM each) |
-
-### GPU & CUDA
-| Item | Version |
-|------|---------|
-| GPU Driver | 570.153.02 |
-| CUDA | 12.8 |
-| cuDNN | Compatible with CUDA 12.x |
-
-### Software Dependencies
-| Package | Version |
-|---------|---------|
-| Python | 3.10.9 |
-
-For all Python package dependencies, see [requirements.txt](requirements.txt).
-
-### Tested Versions
-| Item | Tested Version |
-|------|----------------|
-| Ubuntu | 22.04.5 LTS |
-| Linux Kernel | 6.14.0-37-generic |
-| Python | 3.10.9 |
-| CUDA | 12.8 |
-| GPU Driver | 570.153.02 |
-| GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB) |
-| PyTorch | ≥ 2.0.0 |
 
 ## Quick Start
 
@@ -116,21 +68,21 @@ Downloads all demo datasets to `./dataset/` and all model weights to `./` from [
 
 #### Checkpoints
 
-| Name | Save Path | Description |
-|------|-----------|-------------|
-| `vjepa-nmode-pretrain.pt` | `ckpts/vjepa-nmode-pretrain.pt` | Pretrained ViT-Giant backbone (standard fine-tuning start point) |
-| `vjepa-nmode-pretrain-vitl.pt` | `ckpts/vjepa-nmode-pretrain-vitl.pt` | Pretrained ViT-Large backbone |
-| `vjepa-nmode-pretrain-vith.pt` | `ckpts/vjepa-nmode-pretrain-vith.pt` | Pretrained ViT-Huge backbone |
-| `best_vjepa_model9639(paper).pt` | `ckpts/vjepa_full/best_vjepa_model9639(paper).pt` | Paper-reported fine-tuned ViT-Giant checkpoint |
-| `best_vjepa_model.pt` | `ckpts/vjepa_full_vitl/best_vjepa_model.pt` | Fine-tuned ViT-Large checkpoint |
-| `best_vjepa_model.pt` | `ckpts/vjepa_full_vith/best_vjepa_model.pt` | Fine-tuned ViT-Huge checkpoint |
-| `best_distill.pt` | `distill/cls/output/ckpts/best_distill.pt` | Classification distillation — feature alignment (Stage 1) |
-| `best_finetune_distilled.pt` | `distill/cls/output/ckpts/best_finetune_distilled.pt` | Classification distillation — fine-tuned from distilled (Stage 2) |
-| `best_finetune_scratch.pt` | `distill/cls/output/ckpts/best_finetune_scratch.pt` | Classification distillation — fine-tuned from scratch baseline |
-| `distilled.pt` | `distill/det/output/ckpts/distilled.pt` | Detection distillation — YOLO feature alignment (Stage 1) |
-| `ft-scratch.pt` | `distill/det/output/ckpts/ft-scratch.pt` | Detection distillation — YOLO fine-tuned from scratch baseline |
+| Save Path | Description |
+|-----------|-------------|
+| `ckpts/vjepa-nmode-pretrain.pt` | Pretrained ViT-Giant backbone (standard fine-tuning start point) |
+| `ckpts/vjepa-nmode-pretrain-vitl.pt` | Pretrained ViT-Large backbone |
+| `ckpts/vjepa-nmode-pretrain-vith.pt` | Pretrained ViT-Huge backbone |
+| `ckpts/vjepa_full/best_vjepa_model9639(paper).pt` | Paper-reported fine-tuned ViT-Giant checkpoint |
+| `ckpts/vjepa_full_vitl/best_vjepa_model.pt` | Fine-tuned ViT-Large checkpoint |
+| `ckpts/vjepa_full_vith/best_vjepa_model.pt` | Fine-tuned ViT-Huge checkpoint |
+| `distill/cls/output/ckpts/best_distill.pt` | Classification distillation — feature alignment (Stage 1) |
+| `distill/cls/output/ckpts/best_finetune_distilled.pt` | Classification distillation — fine-tuned from distilled (Stage 2) |
+| `distill/cls/output/ckpts/best_finetune_scratch.pt` | Classification distillation — fine-tuned from scratch baseline |
+| `distill/det/output/ckpts/distilled.pt` | Detection distillation — YOLO feature alignment (Stage 1) |
+| `distill/det/output/ckpts/ft-scratch.pt` | Detection distillation — YOLO fine-tuned from scratch baseline |
 
-### 3. Prepare your dataset
+### 3. Prepare your customized dataset
 
 Organize videos in an `ImageFolder`-style directory — each subfolder named `class_N` holds videos of that class:
 
@@ -185,7 +137,7 @@ BUVFM/
 ├── download_dataset_ckpt.py    # Download all datasets & model weights from Hugging Face Hub
 ├── train.py                  # Fine-tuning script
 ├── inference_ddp_old.py      # Multi-GPU distributed inference 
-├── test.py                   # Arbitrary-dir inference (hardcoded config)
+├── test.py                   # Multi-GPU distributed inference (recursive dir, no labels)
 ├── app.py                    # Gradio 2-stage pipeline demo (port 9530)
 ├── pipeline_utils.py         # 2-stage pipeline: MobileNet+YOLO + VJEPA2+Grad-CAM
 ├── buildmodel.py             # Model construction & checkpoint loading
@@ -237,20 +189,11 @@ BUVFM/
 │       ├── train.py                # Stage 1 — YOLO training + feature alignment
 │       ├── finetune.py             # Stage 1.1 — full YOLO fine-tuning
 │       └── infer.py                # Stage 2 — inference → JSON
-├── QC/
-│   ├── stage1.py                   # Standalone MobileNet+YOLO screener
-│   ├── quality_con_clip_save_ed5.py# Multi-GPU batch clip extraction
-│   ├── best_640_s_60e(2).pt        # YOLO detector weights
-│   └── mobilenetv3_small_075_yl_241222(3).pth  # MobileNetV3 classifier weights
 ├── ckpts/
-│   ├── vjepa-nmode-pretrain.pt     # Standard pretrained weights (fine-tuning start)
-│   └── vjepa_full/                 # Fine-tuned checkpoints + eval CSVs
 ├── assets/                         # 16 example videos (4 per category: Class0/1/2/NO)
 └── output/                         # Inference result CSVs & t-SNE outputs
 
 ```
-
-
 
 ## Dataset Preparation
 
@@ -311,13 +254,9 @@ Fine-tuning starts from `./ckpts/vjepa-nmode-pretrain.pt`. Alternative pretraine
 
 Fine-tuned checkpoints are saved under `ckpts/vjepa_full/` (or variant directories like `vjepa_full_maee1`, `vjepa_full_newval`, etc.). Naming convention: `best_vjepa_model.pt` (best by validation accuracy).
 
-
-
-
 ## Pretraining
 
 See `pretraining/README.md` .
-
 
 ## Training
 
@@ -334,20 +273,6 @@ torchrun --nproc_per_node=4 train.py \
     --lr 5e-5 \
     --epochs 50
 ```
-
-
-### Freeze Backbone
-
-Train the classifier head only while keeping the encoder frozen:
-
-```bash
-torchrun --nproc_per_node=4 train.py \
-    --pretrained_ckpt ./ckpts/vjepa-nmode-pretrain.pt \
-    --batch_size 16 \
-    --lr 5e-5 \
-    --freeze_backbone
-```
-
 ### Training Arguments
 
 | Argument | Default | Description |
@@ -406,13 +331,20 @@ torchrun --master_port=$TRPORT --nproc_per_node=4 inference_ddp_old.py \
 Each rank writes a temp CSV; rank 0 merges and deduplicates. Supports resume (skips already-processed videos if the output CSV exists).
 
 ### Arbitrary Directory Inference (no labels required)
+Recursively scans all videos in the given directory (no `class_N` folder structure required). Output CSV contains `video_name`, `p0`, `p1`, `p2` (no `label` column).
+
 ```bash
-python test.py
+export TRPORT=29599
+export CKPT=/path/to/ckpt
+export VAL_DIR='/path/to/val/dir'
+export OUT='test'
+export EXTRA=""
+export FS=2
+export FPC=16
+torchrun --master_port=$TRPORT --nproc_per_node=4 test.py \
+    --val_dir $VAL_DIR --checkpoint $CKPT --output ./output/$OUT.csv \
+    $EXTRA --frame_step $FS --frames_per_clip $FPC
 ```
-Edit the following variables in `test.py` before running:
-- `checkpoint_path` — path to the fine-tuned checkpoint
-- `input_dir` — path to directory containing videos (recursive scan)
-- `output_csv` — output CSV path
 
 ## Demo
 
@@ -468,6 +400,57 @@ Example inference results are saved to `./output/` as CSV files with per-video p
 ### Online Demo
 
 A hosted Gradio demo is available at [http://buvfm.machineilab.org/](http://buvfm.machineilab.org/).
+
+
+## System Requirements
+
+### Operating System
+| Item | Version |
+|------|---------|
+| OS | Ubuntu 22.04.5 LTS (Jammy Jellyfish) |
+| Kernel | 6.14.0-37-generic |
+| Architecture | x86_64 |
+
+### Hardware
+
+#### Minimum
+| Component | Specification |
+|-----------|---------------|
+| CPU | 8-core x86_64 processor |
+| RAM | 32 GB |
+| GPU | 1× NVIDIA GPU with 24 GB VRAM (e.g., RTX 4090) |
+
+#### Recommended (this configuration)
+| Component | Specification |
+|-----------|---------------|
+| CPU | Intel Xeon Platinum 8568Y+ (192 cores) |
+| RAM | 125 GB |
+| GPU | 4× NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB VRAM each) |
+
+### GPU & CUDA
+| Item | Version |
+|------|---------|
+| GPU Driver | 570.153.02 |
+| CUDA | 12.8 |
+| cuDNN | Compatible with CUDA 12.x |
+
+### Software Dependencies
+| Package | Version |
+|---------|---------|
+| Python | 3.10.9 |
+
+For all Python package dependencies, see [requirements.txt](requirements.txt).
+
+### Tested Versions
+| Item | Tested Version |
+|------|----------------|
+| Ubuntu | 22.04.5 LTS |
+| Linux Kernel | 6.14.0-37-generic |
+| Python | 3.10.9 |
+| CUDA | 12.8 |
+| GPU Driver | 570.153.02 |
+| GPU | NVIDIA RTX PRO 6000 Blackwell Server Edition (96 GB) |
+| PyTorch | ≥ 2.0.0 |
 
 ## Reproduction
 
