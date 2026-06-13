@@ -75,7 +75,7 @@ def parse_args():
         default="/home/wcz/workspace/DATASET/reader_study_videos_desensitization_class_0517",
         help="Input video folder",
     )
-    io.add_argument("--output_json_name",type=str,default="output/merged_models_frame_results_desensitization_class_0517.json",help="Output JSON filename",)
+    io.add_argument("--output_json_name",type=str,default="output/QC/out.json",help="Output JSON filename",)
 
     # --- 模型路径 ---
     model = parser.add_argument_group("Model paths")

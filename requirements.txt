@@ -1,20 +1,45 @@
-gradio>=5.0.0
-plotly>=5.0.0
-torch>=2.0.0
-torchvision>=0.15.0
-decord
-opencv-python
-imageio[ffmpeg]
+# core
+torch==2.9.1+cu128
+torchvision==0.24.1+cu128
+numpy==2.4.6
+einops==0.8.2
 timm==0.4.12
-ultralytics
-pillow
-numpy
-scikit-learn
-pandas
-tqdm
-huggingface-hub
-einops
-tensorboardX
-matplotlib
-lpips
-psutil
+
+# data & video
+decord==0.6.0
+opencv-python==4.13.0.90
+pillow==11.3.0
+imageio[ffmpeg]==2.37.3
+h5py
+pandas==3.0.3
+
+# training & logging
+tensorboardX==2.6.4
+tensorboard==2.20.0
+wandb==0.25.0
+lpips==0.1.4
+scipy==1.16.3
+torchdiffeq==0.2.5
+
+# utils
+gradio==6.14.0
+plotly==6.7.0
+matplotlib==3.10.8
+scikit-learn==1.8.0
+scikit-image
+tqdm==4.67.1
+psutil==7.1.3
+PyYAML==6.0.3
+huggingface_hub==1.2.3
+ultralytics==8.4.9
+
+# pretraining
+submitit==1.5.4
+braceexpand
+webdataset
+transformers
+peft
+beartype
+fire==0.7.1
+python-box
+ftfy

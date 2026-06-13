@@ -23,6 +23,7 @@ BUVFM is the first breast ultrasound video foundation model, pretrained on 423K 
 ## Quick Start
 <details>
 <summary>Show/Hide</summary>
+    
 ### 1. Install dependencies
 
 ```bash
